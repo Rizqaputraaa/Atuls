@@ -7,7 +7,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
-let file = null, flag = null, started = Date.now();
+let file = null, vfile = null, flag = null, started = Date.now();
 const stamp = () => new Date().toISOString().replace('T', ' ').slice(0, 23);
 function line(msg) { try { fs.appendFileSync(file, `${stamp()}  ${msg}\n`); } catch {} }
 
@@ -33,8 +33,9 @@ function init() {
   try {
     const dir = app.getPath('userData');
     file = path.join(dir, 'island-run.log');
+    vfile = path.join(dir, 'island-verbose.log');
     flag = path.join(dir, 'running.flag');
-    try { if (fs.existsSync(file) && fs.statSync(file).size > 2000000) fs.renameSync(file, file + '.old'); } catch {}
+    rotate(file, 10e6, 10); rotate(vfile, 20e6, 4);
     let previous = 0;
     try { if (fs.existsSync(flag)) previous = fs.statSync(flag).mtimeMs; } catch {}
     line(`==== start pid ${process.pid} ${process.platform} electron ${process.versions.electron}`);
@@ -43,11 +44,11 @@ function init() {
   } catch (e) { console.error('[island] lifecycle log unavailable:', e.message); return; }
 
   // everything the app already prints with an [island] prefix is copied into the run log, so one file tells the whole story
-  const NOISY = /scroll injected|inject key|double click injected|window now|page loaded|Security Warning|console-message/;
+  const NOISY = /scroll injected|inject key|double click injected|window now|page loaded|Security Warning|console-message|\[gaze\]/;
   for (const name of ['log', 'error']) {
     const orig = console[name].bind(console);
     console[name] = (...a) => {
-      try { const s = typeof a[0] === 'string' ? a.map((x) => (typeof x === 'string' ? x : (() => { try { return JSON.stringify(x); } catch { return String(x); } })())).join(' ') : ''; if (/^\[(island|drop|drag|renderer)\]/.test(s) && !NOISY.test(s)) line((name === 'error' ? 'ERROR ' : '') + s.slice(0, 400)); } catch {}
+      try { const s = typeof a[0] === 'string' ? a.map((x) => (typeof x === 'string' ? x : (() => { try { return JSON.stringify(x); } catch { return String(x); } })())).join(' ') : ''; if (/^\[(island|drop|drag|renderer|gaze)\]/.test(s)) { if (NOISY.test(s)) verbose((name === 'error' ? 'ERROR ' : '') + s.slice(0, 400)); else line((name === 'error' ? 'ERROR ' : '') + s.slice(0, 400)); } } catch {}
       return orig(...a);
     };
   }
@@ -72,4 +73,4 @@ function init() {
 function tail(n = 400) {
   try { const t = fs.readFileSync(file, 'utf8').split(String.fromCharCode(10)); return t.slice(-n - 1).join(String.fromCharCode(10)); } catch (e) { return 'no run log: ' + e.message; }
 }
-module.exports = { init, line, tail, get file() { return file; } };
+module.exports = { init, line, verbose, tail, get file() { return file; } };

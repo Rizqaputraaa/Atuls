@@ -1,6 +1,6 @@
 // Diagnostics: a compact event log plus a short summary report that judges how well the screen hand-over and the
 // pointer behaved (accuracy of where the pointer lands, delay and jitter of the link, takebacks, blocked crossings).
-// Files, in the app's data folder: diag.log (one JSON line per event, rotated at ~1.5 MB) and diag-summary.txt.
+// Files, in the app's data folder: diag.log (one JSON line per event, rotated at 10 MB, 5 files kept) and diag-summary.txt.
 const fs = require('fs');
 const path = require('path');
 
@@ -41,7 +41,7 @@ class Diag {
       this.recent.push(line.length > 220 ? line.slice(0, 220) + '...' : line);
       if (this.recent.length > 14) this.recent.shift();
       fs.appendFileSync(this.file, line + '\n');
-      if (++this.written % 200 === 0 && fs.statSync(this.file).size > 1.5e6) { try { fs.renameSync(this.file, this.file + '.1'); } catch {} }
+      if (++this.written % 200 === 0 && fs.statSync(this.file).size > 10e6) { for (let i = 4; i >= 1; i--) { try { fs.renameSync(`${this.file}.${i}`, `${this.file}.${i + 1}`); } catch {} } try { fs.renameSync(this.file, this.file + '.1'); } catch {} }
     } catch { /* diagnostics must never break the app */ }
   }
 

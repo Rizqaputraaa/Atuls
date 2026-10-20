@@ -118,6 +118,14 @@ app.on('child-process-gone', (_e, d) => console.error('[island] child process go
 const lifecycle = require('./lifecycle');
 lifecycle.init(); // island-run.log: start, quit requests (with who asked), crashes and a clean-shutdown verdict
 let win, link, overlay, tray, lastHide = 0, diag;
+// One line a minute for a long test: memory, CPU, link state, camera, how long the hooks were silent. Cheap, and it shows slow leaks or a
+// stuck state days later without having to be there when it happens.
+setInterval(() => {
+  try {
+    const m = app.getAppMetrics(); const cpu = m.reduce((a, p) => a + (p.cpu.percentCPUUsage || 0), 0), mem = m.reduce((a, p) => a + (p.memory.workingSetSize || 0), 0) / 1024;
+    lifecycle.line(`health: cpu ${cpu.toFixed(1)}% mem ${Math.round(mem)} MB procs ${m.length} link ${link ? link.state + (link.sock ? ' linked' : ' alone') : '-'} camera ${typeof gazeWin !== 'undefined' && gazeWin ? 'on' : 'off'} up ${Math.round(process.uptime() / 60)} min`);
+  } catch {}
+}, 60000).unref();
 const MIRRORED = new Set(['gaze', 'colors', 'perm']); // the settings window shows these as well
 const sendWin = (ch, ...a) => { if (win && !win.isDestroyed()) win.webContents.send(ch, ...a); if (MIRRORED.has(ch)) radial.sendSettings(ch, ...a); };
 // short banner that grows out of the pill for a few seconds
