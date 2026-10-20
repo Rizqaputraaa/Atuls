@@ -1089,10 +1089,10 @@ class Link extends EventEmitter {
     this.elevCheckAt = now;
     if (native.winCursor.foregroundElevated() !== true || now - (this.elevWarnAt || 0) < 20000) return;
     this.elevWarnAt = now;
-    const text = 'Windows does not let Island Link click or type in an app that runs as administrator (like Task Manager). Close that app, or run Island Link as administrator.';
+    const text = 'Windows does not let A-tuls click or type in an app that runs as administrator (like Task Manager). Close that app, or run A-tuls as administrator.';
     try { require('./lifecycle').line('input blocked: the window in front runs as administrator'); } catch {}
     this.emit('notice', { title: 'Cannot control this app', text: 'Run it as administrator, or close it', kind: 'err' }); // the same message the other computer shows for its own events
-    this.send({ t: 'notice', title: 'Cannot control this app', text: 'Run Island Link as administrator, or close it', kind: 'err' });
+    this.send({ t: 'notice', title: 'Cannot control this app', text: 'Run A-tuls as administrator, or close it', kind: 'err' });
   }
 
   // ---- screenshots -----------------------------------------------------------

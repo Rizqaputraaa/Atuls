@@ -46,5 +46,5 @@ Settings → Copy diagnostics. Isi: temuan otomatis, pengukuran (RTT, jeda gerak
 
 ## Aplikasi macet / proses zombie
 - Aplikasi dijaga `src/guardian.js`: tanpa detak 10 detik, dimatikan dan dijalankan ulang otomatis. Untuk mencobanya: tulis `hang:40000` ke `control.cmd` (hanya di mode pengembangan); setelah sekitar 10 detik log mencatat `guardian: ... ending it` dan `restarted by the watchdog`.
-- Bila ada proses lama yang tak bisa dimatikan (HasExited=True, 1 thread), aplikasi baru tetap jalan di folder data "Island Link (2)" dan port berikutnya; log mencatat `the usual data folder is held by a stuck leftover`. Restart Windows tetap membersihkan sisa itu, tetapi tidak lagi wajib. Folder data kedua ada di sebelah yang pertama; `control.cmd` ada di folder yang sedang dipakai.
+- Bila ada proses lama yang tak bisa dimatikan (HasExited=True, 1 thread), aplikasi baru tetap jalan di folder data "A-tuls (2)" dan port berikutnya; log mencatat `the usual data folder is held by a stuck leftover`. Restart Windows tetap membersihkan sisa itu, tetapi tidak lagi wajib. Folder data kedua ada di sebelah yang pertama; `control.cmd` ada di folder yang sedang dipakai.
 - Jangan mematikan paksa aplikasi yang sedang macet dari luar bila watchdog bisa melakukannya: watchdog mematikannya sebelum tersangkut.

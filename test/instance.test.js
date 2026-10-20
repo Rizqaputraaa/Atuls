@@ -36,7 +36,7 @@ test('the lock is free: this run uses the usual folder and records its process i
   assert.strictEqual(Number(fs.readFileSync(path.join(base, 'instance.pid'), 'utf8')), process.pid);
 });
 
-test('the lock is held by a really running Island Link: this start gives up', async () => {
+test('the lock is held by a really running A-tuls: this start gives up', async () => {
   const base = tmp();
   const live = spawn(process.execPath, ['-e', 'setTimeout(()=>{}, 8000)']);
   fs.writeFileSync(path.join(base, 'instance.pid'), String(live.pid));
@@ -61,7 +61,7 @@ test('the lock is held by a dead process (a stuck leftover): a second folder wit
   fs.rmSync(r.dir, { recursive: true, force: true });
 });
 
-// a live Island Link answers on its port; a stuck leftover accepts the connection and never answers (the servers live in another process)
+// a live A-tuls answers on its port; a stuck leftover accepts the connection and never answers (the servers live in another process)
 const serverProcess = (kind) => new Promise((resolve) => {
   const src = kind === 'live'
     ? "const { WebSocketServer } = require('" + path.join(__dirname, '..', 'node_modules', 'ws').split(path.sep).join('/') + "'); const s = new WebSocketServer({ port: 0, host: '127.0.0.1' }); s.on('listening', () => console.log(s.address().port));"
@@ -70,7 +70,7 @@ const serverProcess = (kind) => new Promise((resolve) => {
   c.stdout.once('data', (d) => resolve({ port: Number(String(d).trim()), stop: () => c.kill() }));
 });
 
-test('lock taken, no process id on record, something answers on the port: a running Island Link, this start gives up', async () => {
+test('lock taken, no process id on record, something answers on the port: a running A-tuls, this start gives up', async () => {
   const srv = await serverProcess('live');
   const keep = process.env.ISLAND_PORT; process.env.ISLAND_PORT = String(srv.port);
   try {
@@ -105,4 +105,25 @@ test('back in the usual folder, newer settings from the second folder are merged
   assert.strictEqual(fs.readFileSync(path.join(base, 'config.json'), 'utf8'), '{"new":1}');
   assert.ok(fs.existsSync(path.join(alt, 'config.json.merged')));
   fs.rmSync(alt, { recursive: true, force: true });
+});
+
+test('the first start under the new name takes over the settings of the newest old-named folder', () => {
+  const parent = tmp();
+  const base = path.join(parent, 'A-tuls'), oldPc = path.join(parent, 'Island Link'), oldMac = path.join(parent, 'island-link');
+  fs.mkdirSync(oldPc); fs.mkdirSync(oldMac);
+  fs.writeFileSync(path.join(oldMac, 'config.json'), '{"which":"older"}');
+  fs.writeFileSync(path.join(oldPc, 'config.json'), '{"which":"newer"}');
+  fs.writeFileSync(path.join(oldPc, 'Local State'), '{"key":"k"}');
+  const past = new Date(Date.now() - 86400000);
+  fs.utimesSync(path.join(oldMac, 'config.json'), past, past);
+  const r = claim(fakeApp(base, [true]));
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.migratedFrom, oldPc);
+  assert.strictEqual(fs.readFileSync(path.join(base, 'config.json'), 'utf8'), '{"which":"newer"}');
+  assert.strictEqual(fs.readFileSync(path.join(base, 'Local State'), 'utf8'), '{"key":"k"}');
+  // once the new folder has settings it is left alone
+  fs.writeFileSync(path.join(oldPc, 'config.json'), '{"which":"changed later"}');
+  const again = claim(fakeApp(base, [true]));
+  assert.strictEqual(again.migratedFrom, null);
+  assert.strictEqual(fs.readFileSync(path.join(base, 'config.json'), 'utf8'), '{"which":"newer"}');
 });

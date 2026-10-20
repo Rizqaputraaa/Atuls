@@ -1,7 +1,7 @@
 {
-  "name": "island-link",
+  "name": "a-tuls",
   "version": "1.0.0",
-  "description": "A Dynamic Island style pill with a shared mouse, keyboard, clipboard and file tray for Windows and macOS",
+  "description": "A-tuls: a notch-style pill with a shared mouse, keyboard, clipboard, file tray and screenshots for Windows and macOS",
   "main": "src/main.js",
   "scripts": {
     "start": "electron .",
@@ -11,8 +11,8 @@
     "pack": "electron-builder --dir"
   },
   "author": {
-    "name": "Mujib",
-    "email": "mujibnusapati93@gmail.com"
+    "name": "Rizqaputra",
+    "email": "rizqaputra60@gmail.com"
   },
   "license": "UNLICENSED",
   "type": "commonjs",
@@ -23,10 +23,10 @@
     "uiohook-napi": "^1.5.5",
     "ws": "^8.22.0"
   },
-  "productName": "Island Link",
+  "productName": "A-tuls",
   "build": {
-    "appId": "app.islandlink.desktop",
-    "productName": "Island Link",
+    "appId": "app.atuls.desktop",
+    "productName": "A-tuls",
     "asar": false,
     "files": [
       "package.json",
@@ -42,7 +42,7 @@
     "directories": {
       "output": "dist"
     },
-    "artifactName": "Island-Link-${version}-${os}-${arch}.${ext}",
+    "artifactName": "A-tuls-${version}-${os}-${arch}.${ext}",
     "win": {
       "target": [
         {
@@ -89,7 +89,7 @@
       "category": "public.app-category.utilities",
       "identity": null,
       "extendInfo": {
-        "NSCameraUsageDescription": "Island Link uses the camera only on this computer to follow your head and switch computers. Video never leaves this computer.",
+        "NSCameraUsageDescription": "A-tuls uses the camera only on this computer to follow your head and switch computers. Video never leaves this computer.",
         "LSUIElement": true
       },
       "files": [
@@ -110,7 +110,7 @@
       ]
     },
     "dmg": {
-      "title": "Install Island Link"
+      "title": "Install A-tuls"
     },
     "npmRebuild": false,
     "afterPack": "build/afterPack.js",

@@ -1,6 +1,6 @@
-# Island Link
+# A-tuls
 
-A Dynamic Island–style pill for Windows and macOS, plus a WingDeck-style shared pointer: one mouse and keyboard control a Windows PC and a Mac over the local network, with a shared clipboard, file tray, screenshots, smooth scrolling and an optional "turn your head to switch computers" mode.
+A notch-style pill for Windows and macOS, plus a WingDeck-style shared pointer: one mouse and keyboard control a Windows PC and a Mac over the local network, with a shared clipboard, file tray, screenshots, smooth scrolling and an optional "turn your head to switch computers" mode.
 
 > Status: working prototype (v1.0.0, not yet released). See `docs/` for the full documentation.
 

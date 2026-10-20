@@ -1,23 +1,23 @@
-# Instalasi Island Link (tanpa App Store)
+# Instalasi A-tuls (tanpa App Store)
 
 Aplikasi dibagikan lewat **GitHub Releases** (atau situs pribadi). Belum ditandatangani, jadi sistem akan memberi peringatan satu kali.
 
 ## Windows 10/11
-1. Unduh `Island-Link-<versi>-win-x64.exe` dari halaman Releases.
+1. Unduh `A-tuls-<versi>-win-x64.exe` dari halaman Releases.
 2. Jalankan. Jika muncul **"Windows protected your PC"**: klik **More info → Run anyway** (muncul karena belum ada sertifikat code-signing).
-3. Pilih folder, selesai. Island Link muncul di tengah atas layar.
+3. Pilih folder, selesai. A-tuls muncul di tengah atas layar.
 4. Firewall: izinkan koneksi jaringan privat saat diminta (port TCP 47800).
 
 ## macOS 12+
-1. Unduh `Island-Link-<versi>-mac-arm64.dmg` (Apple Silicon) atau `-x64.dmg` (Intel).
-2. Buka DMG, seret **Island Link** ke **Applications**.
+1. Unduh `A-tuls-<versi>-mac-arm64.dmg` (Apple Silicon) atau `-x64.dmg` (Intel).
+2. Buka DMG, seret **A-tuls** ke **Applications**.
 3. Pertama kali dibuka macOS akan menolak aplikasi yang belum dinotarisasi. Pilih salah satu:
    - klik kanan aplikasi → **Open** → **Open**, atau
-   - jalankan di Terminal: `xattr -cr "/Applications/Island Link.app"`
+   - jalankan di Terminal: `xattr -cr "/Applications/A-tuls.app"`
 4. Beri izin di **System Settings → Privacy & Security**: **Accessibility**, **Input Monitoring** (dan **Camera** bila memakai Look to switch). Setelah memberi izin, buka ulang aplikasi.
 
 ## Menghubungkan dua komputer
-1. Buka Island Link di kedua komputer, di jaringan yang sama (Windows ↔ Mac, Mac ↔ Mac, atau Windows ↔ Windows).
+1. Buka A-tuls di kedua komputer, di jaringan yang sama (Windows ↔ Mac, Mac ↔ Mac, atau Windows ↔ Windows).
 2. Di komputer A: tab **Link** → catat IP dan kode 6 digit.
 3. Di komputer B: tab **Link** → isi IP dan kode A → **Connect**. Berikutnya cukup pilih dari **Recent devices**.
 4. **Arrange screens** untuk mengatur posisi layar.

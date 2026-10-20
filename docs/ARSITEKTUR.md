@@ -1,4 +1,4 @@
-# Arsitektur Island Link
+# Arsitektur A-tuls
 
 Dokumen ini menjelaskan cara kerja aplikasi. Tanggal terakhir diperbarui: 2026-10-19.
 
@@ -85,7 +85,7 @@ State: `idle`, `controlling` (saya mengendalikan peer), `controlled` (saya diken
 
 ## 7. Data & konfigurasi
 
-Disimpan di `store` (JSON di folder userData `island-link`): `deviceId`, daftar perangkat terakhir + token, `clipboard`, `smoothWheel`, `edgeResistance`, `freelookGuard`, `scrollSpeed`, `scrollReverse`, `scrollTune`, `tray` (daftar path), `gazeOn`, `gazeCal` (per peer), layout offset (mm). Diagnostik ditulis ke folder yang sama.
+Disimpan di `store` (JSON di folder userData `A-tuls`): `deviceId`, daftar perangkat terakhir + token, `clipboard`, `smoothWheel`, `edgeResistance`, `freelookGuard`, `scrollSpeed`, `scrollReverse`, `scrollTune`, `tray` (daftar path), `gazeOn`, `gazeCal` (per peer), layout offset (mm). Diagnostik ditulis ke folder yang sama.
 
 ## 8. Fitur Look to switch
 

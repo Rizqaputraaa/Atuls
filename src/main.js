@@ -12,7 +12,7 @@ const HK = require('./hotkeys');
 const KEY_NAMES = Object.keys(require('uiohook-napi').UiohookKey);
 const { Calibrator, ZoneTracker } = require('./gaze');
 const { keyboard, Key } = require('@nut-tree-fork/nut-js');
-// which data folder this run uses (and whether another Island Link is really running): decided before the settings are read
+// which data folder this run uses (and whether another A-tuls is really running): decided before the settings are read
 const instance = require('./instance').claim(app);
 
 const MAC = process.platform === 'darwin';
@@ -399,7 +399,7 @@ function macMediaCommand(k) {
 }
 
 // Windows: one long-lived PowerShell answers a poll (one line in, one JSON line out). Starting a new PowerShell every 3 seconds cost about
-// 0.4 s of CPU each time, roughly 1% of the whole computer, and none of it showed in Island Link's own processes.
+// 0.4 s of CPU each time, roughly 1% of the whole computer, and none of it showed in A-tuls's own processes.
 let mediaChild = null, mediaSend = null, syncOutFn = () => {}, syncTest = () => 'no sync';
 function mediaStop() { try { if (mediaChild) mediaChild.kill(); } catch {} mediaChild = null; }
 let screenLocked = false;
@@ -488,7 +488,7 @@ const onDisplaysChanged = () => { clearTimeout(displayTimer); displayTimer = set
 // Self test: a small window with a text field that takes the focus, so keys sent by the other computer end up somewhere we can read.
 function keySink() {
   const { BrowserWindow } = require('electron');
-  const w = new BrowserWindow({ width: 340, height: 120, show: true, alwaysOnTop: true, title: 'Island Link key test', webPreferences: { contextIsolation: true } });
+  const w = new BrowserWindow({ width: 340, height: 120, show: true, alwaysOnTop: true, title: 'A-tuls key test', webPreferences: { contextIsolation: true } });
   w.loadURL('data:text/html,<body style="font:14px sans-serif">Key test<br><input id=i autofocus style="width:300px;font-size:18px"></body>');
   w.once('ready-to-show', () => { app.focus && app.focus({ steal: true }); w.focus(); w.webContents.focus(); });
   setTimeout(async () => {
@@ -504,7 +504,7 @@ function setupSas() {
   link.on('sas', (d) => {
     close();
     lifecycle.line('pairing: waiting for the person to compare the numbers (' + d.role + ')');
-    sasWin = new BrowserWindow({ width: 380, height: 290, show: false, resizable: false, minimizable: false, maximizable: false, alwaysOnTop: true, center: true, title: 'Island Link - confirm pairing', backgroundColor: '#141416', autoHideMenuBar: true, webPreferences: { preload: path.join(__dirname, 'sas-preload.js'), contextIsolation: true } });
+    sasWin = new BrowserWindow({ width: 380, height: 290, show: false, resizable: false, minimizable: false, maximizable: false, alwaysOnTop: true, center: true, title: 'A-tuls - confirm pairing', backgroundColor: '#141416', autoHideMenuBar: true, webPreferences: { preload: path.join(__dirname, 'sas-preload.js'), contextIsolation: true } });
     sasWin.setMenu(null);
     sasWin.loadFile(path.join(__dirname, 'sas.html'));
     sasWin.webContents.once('did-finish-load', () => { try { sasWin.webContents.send('sas:show', d); sasWin.show(); app.focus && app.focus({ steal: true }); sasWin.focus(); } catch {} });
@@ -517,7 +517,7 @@ function setupSas() {
 let onboardWin = null;
 function showOnboard() {
   if (onboardWin && !onboardWin.isDestroyed()) return;
-  onboardWin = new BrowserWindow({ width: 480, height: 330, resizable: false, minimizable: false, maximizable: false, alwaysOnTop: true, center: true, title: 'Island Link - allow access', backgroundColor: '#141416', webPreferences: { preload: path.join(__dirname, 'onboard-preload.js'), contextIsolation: true } });
+  onboardWin = new BrowserWindow({ width: 480, height: 330, resizable: false, minimizable: false, maximizable: false, alwaysOnTop: true, center: true, title: 'A-tuls - allow access', backgroundColor: '#141416', webPreferences: { preload: path.join(__dirname, 'onboard-preload.js'), contextIsolation: true } });
   onboardWin.setMenu(null);
   onboardWin.loadFile(path.join(__dirname, 'onboard.html'));
   onboardWin.on('closed', () => { onboardWin = null; });
@@ -569,11 +569,11 @@ function startInput() {
 }
 
 // ---- screenshots are saved into one folder ------------------------------------
-// Screenshots taken with Island Link (the screenshot button / shortcut, on either computer) and the system's own shortcut are copied to the
+// Screenshots taken with A-tuls (the screenshot button / shortcut, on either computer) and the system's own shortcut are copied to the
 // clipboard by the system; the clipboard watcher below sees them and writes each one as a PNG file into the chosen folder.
 const shotDir = () => store.get('shotDir', '');
 const shotOn = () => !!store.get('shotSave', false) && !!shotDir();
-const ownShots = new Set(); // files Island Link wrote itself (the Mac watcher must not treat them as new screenshots)
+const ownShots = new Set(); // files A-tuls wrote itself (the Mac watcher must not treat them as new screenshots)
 let macShotDir = '', macShotSkipUntil = 0;
 function saveShot(png, why) {
   if (!shotOn()) return;
@@ -660,7 +660,7 @@ async function shotTest() {
 
 // macOS: the system's own screenshot shortcuts (Cmd+Shift+3/4/5) write a FILE and leave the clipboard alone, so such a screenshot could not be pasted
 // and never reached the other computer. The folder macOS saves into is watched: each new screenshot file is also put on the clipboard (which
-// shares it with the other computer and, if wanted, saves it in the Island Link folder).
+// shares it with the other computer and, if wanted, saves it in the A-tuls folder).
 function watchMacScreenshots() {
   if (!MAC) return;
   let dir = path.join(os.homedir(), 'Desktop');
@@ -710,7 +710,7 @@ async function checkShotLimit(ask) {
   try {
     const mb = (n) => Math.round(n / MB);
     const r = await (ask || ((o) => dialog.showMessageBox(o)))({
-      type: 'warning', title: 'Island Link', message: 'The screenshot folder has reached ' + mb(total) + ' MB',
+      type: 'warning', title: 'A-tuls', message: 'The screenshot folder has reached ' + mb(total) + ' MB',
       detail: 'Limit: ' + mb(limit) + ' MB (' + files.length + ' pictures)\n' + shotDir() + '\n\nDelete the oldest pictures (they go to the Trash, down to 60% of the limit), or keep everything and be asked again after another ' + mb(limit) + ' MB.',
       buttons: ['Delete the oldest', 'Keep everything', 'Open the folder'], defaultId: 0, cancelId: 1, noLink: true,
     });
@@ -728,8 +728,8 @@ async function checkShotLimit(ask) {
 }
 
 // macOS: where the system's own screenshots go. By default they become a file only, and show a floating thumbnail first, so the file appears up to
-// five seconds after the screenshot and the clipboard is never used. While Island Link runs (and saves screenshots), the destination is the
-// clipboard: the picture can be pasted at once and Island Link writes the file itself. The old setting is put back when the app quits.
+// five seconds after the screenshot and the clipboard is never used. While A-tuls runs (and saves screenshots), the destination is the
+// clipboard: the picture can be pasted at once and A-tuls writes the file itself. The old setting is put back when the app quits.
 const macDefaults = (...a) => require('child_process').execFileSync('defaults', a, { timeout: 3000 }).toString().trim();
 function macTargetSync() {
   if (!MAC) return;
@@ -737,7 +737,7 @@ function macTargetSync() {
   try {
     if (want) {
       if (store.get('macTargetOrig', null) === null) { let orig; try { orig = macDefaults('read', 'com.apple.screencapture', 'target'); } catch { orig = '__unset__'; } store.set('macTargetOrig', orig); }
-      if ((() => { try { return macDefaults('read', 'com.apple.screencapture', 'target'); } catch { return ''; } })() !== 'clipboard') { macDefaults('write', 'com.apple.screencapture', 'target', 'clipboard'); lifecycle.line('mac screenshots now go to the clipboard first (Island Link saves the file)'); }
+      if ((() => { try { return macDefaults('read', 'com.apple.screencapture', 'target'); } catch { return ''; } })() !== 'clipboard') { macDefaults('write', 'com.apple.screencapture', 'target', 'clipboard'); lifecycle.line('mac screenshots now go to the clipboard first (A-tuls saves the file)'); }
     } else macTargetRestore();
   } catch (e) { lifecycle.line('mac screenshot target: ' + e.message); }
 }
@@ -1026,7 +1026,7 @@ function closeIfPinnedOutside() {
 
 function createTray() {
   tray = new Tray(MAC ? pillIcon() : nativeImage.createFromBitmap(Buffer.alloc(16 * 16 * 4, 255), { width: 16, height: 16 }));
-  tray.setToolTip('Island Link');
+  tray.setToolTip('A-tuls');
   tray.setContextMenu(Menu.buildFromTemplate([
     { label: 'Show island', click: () => win.showInactive() },
     { label: 'Quit', click: () => app.quit() },
@@ -1037,17 +1037,18 @@ app.whenReady().then(() => {
   console.log('[island] starting');
   if (!instance.ok) {
     console.log('[island] another instance is already running - quitting this one');
-    if (instance.running) { try { dialog.showMessageBoxSync({ type: 'info', title: 'Island Link', message: 'Island Link is already running.', detail: 'Look for it at the top of the screen (the pill) or in the system tray.' }); } catch {} }
+    if (instance.running) { try { dialog.showMessageBoxSync({ type: 'info', title: 'A-tuls', message: 'A-tuls is already running.', detail: 'Look for it at the top of the screen (the pill) or in the system tray.' }); } catch {} }
     return app.quit();
   }
   if (instance.fallback) lifecycle.line('the usual data folder is held by a stuck leftover of an earlier run: using ' + instance.dir);
+  if (instance.migratedFrom) lifecycle.line('settings taken over from the old data folder: ' + instance.migratedFrom);
   if (instance.merged && instance.merged.length) lifecycle.line('newer settings from ' + instance.merged.join(', ') + ' were merged back');
   if (process.platform === 'darwin') app.dock.hide();
   // `electron . --quit` from a second launch asks this instance to close itself properly (killing it can leave it stuck)
   app.on('second-instance', (_e, argv) => { if (argv.includes('--quit')) app.quit(); });
   createWindow();
   startGuardian();
-  if (process.env.ISLAND_RECOVERED) { lifecycle.line('restarted by the watchdog after a freeze (' + process.env.ISLAND_RECOVERED + ')'); setTimeout(() => toast('Island Link restarted', 'It had stopped answering and was restarted', 'err'), 5000); }
+  if (process.env.ISLAND_RECOVERED) { lifecycle.line('restarted by the watchdog after a freeze (' + process.env.ISLAND_RECOVERED + ')'); setTimeout(() => toast('A-tuls restarted', 'It had stopped answering and was restarted', 'err'), 5000); }
 
   diag = new Diag(app.getPath('userData'), process.platform === 'win32' ? 'PC (Windows)' : 'Mac', () => {
     const s = link ? link.status() : {};
@@ -1059,7 +1060,7 @@ app.whenReady().then(() => {
       layout: lay ? `this at (${r(lay.self.off.x)},${r(lay.self.off.y)}) mm, other at (${r(lay.peer.off.x)},${r(lay.peer.off.y)}) mm, other is on the ${s.peerSide}` : 'not linked',
     };
   });
-  link = new Link({ diag, input, getDisplays: displaysList, store: protectedStore(store), downloadDir: path.join(app.getPath('downloads'), 'IslandLink') });
+  link = new Link({ diag, input, getDisplays: displaysList, store: protectedStore(store), downloadDir: path.join(app.getPath('downloads'), 'A-tuls') });
   let lastPin = '';
   link.on('status', (s) => { if (s.pin !== lastPin) { lastPin = s.pin; console.log('[island] pairing code', s.pin); } console.log('[island] link:', s.connected ? 'connected to ' + s.peerName : 'disconnected', s.state); sendWin('link', s); });
   link.on('transfer', (t) => {
@@ -1109,7 +1110,7 @@ app.whenReady().then(() => {
   // again from the Link tab (Recent: one click, no code).
   link.on('lost', (peer) => lifecycle.line(`link ended: ${peer.name} (${peer.host})`));
   radial.init({ store, link, toast, pickColor, saveColor, MAC });
-  // other computers on this network that run Island Link (shown in the Link tab)
+  // other computers on this network that run A-tuls (shown in the Link tab)
   const { Discovery } = require('./discovery');
   const discovery = global.__discovery = new Discovery(() => ({ id: link.id, name: require('os').hostname(), plat: process.platform, port: link.status().port }));
   discovery.on('error', (e) => console.error('[island] discovery:', e));
@@ -1228,7 +1229,7 @@ app.whenReady().then(() => {
       else if (c.startsWith('pair:')) { const [, h, p] = c.split(':'); link.connect(h, p, 'right', null, undefined, true).then(() => lifecycle.line('pair: connected')).catch((e) => lifecycle.line('pair failed: ' + e.message)); }
       else if (c === 'filetest') {
         const f = require('path').join(require('os').tmpdir(), 'island-filetest.txt');
-        require('fs').writeFileSync(f, 'island link file test ' + new Date().toISOString() + ' ' + 'x'.repeat(600000));
+        require('fs').writeFileSync(f, 'a-tuls file test ' + new Date().toISOString() + ' ' + 'x'.repeat(600000));
         link.sendFile(f).then(() => lifecycle.line('filetest: sent ' + require('crypto').createHash('md5').update(require('fs').readFileSync(f)).digest('hex'))).catch((e) => lifecycle.line('filetest failed: ' + e.message));
       } else if (c === 'keysink') keySink();
       else if (c.startsWith('keytest')) link.injectTest(c.includes(':') ? c.split(':')[1].split(',') : ['F24'], !c.includes(':')).then((r) => lifecycle.line('keytest: ' + r)).catch((e) => lifecycle.line('keytest failed: ' + e.message));
@@ -1272,7 +1273,7 @@ app.whenReady().then(() => {
     freelookGuard: { get: () => store.get('freelookGuard', true), set: (v) => { store.set('freelookGuard', !!v); link.prefs.freelookGuard = !!v; } },
     clipboard: { get: () => store.get('clipboard', true), set: (v) => store.set('clipboard', !!v) },
     gazeOn: { get: () => store.get('gazeOn', false), set: (v) => { store.set('gazeOn', !!v); if (v) { gazeWakeUntil = Date.now() + 10 * 60 * 1000; gazeSuspended = false; } applyGaze(); } },
-    shotSave: { get: () => store.get('shotSave', false), set: (v) => { if (v && !shotDir()) store.set('shotDir', path.join(app.getPath('pictures'), 'Island Link Screenshots')); store.set('shotSave', !!v); macTargetSync(); } },
+    shotSave: { get: () => store.get('shotSave', false), set: (v) => { if (v && !shotDir()) store.set('shotDir', path.join(app.getPath('pictures'), 'A-tuls Screenshots')); store.set('shotSave', !!v); macTargetSync(); } },
     shotFormat: { get: () => store.get('shotFormat', 'png'), set: (v) => { if (v === 'png' || v === 'jpg') store.set('shotFormat', v); } },
     shotLimitMb: { get: () => store.get('shotLimitMb', 500), set: (v) => { if (Number(v) >= 1) store.set('shotLimitMb', Math.min(100000, Math.round(Number(v)))); } },
     shotOther: { get: () => store.get('shotOther', true), set: (v) => store.set('shotOther', !!v) },
@@ -1343,7 +1344,7 @@ app.whenReady().then(() => {
     if (o && Number(o.limitMb) >= 1) { store.set('shotLimitMb', Math.min(100000, Math.round(Number(o.limitMb)))); limitSnoozeUntil = 0; setTimeout(checkShotLimit, 500); }
     if (o && typeof o.macClip === 'boolean') store.set('macClip', o.macClip);
     if (o && typeof o.on === 'boolean') {
-      if (o.on && !shotDir()) store.set('shotDir', path.join(app.getPath('pictures'), 'Island Link Screenshots'));
+      if (o.on && !shotDir()) store.set('shotDir', path.join(app.getPath('pictures'), 'A-tuls Screenshots'));
       store.set('shotSave', o.on);
     }
     lifecycle.line('settings: save screenshots ' + JSON.stringify(shotState()));

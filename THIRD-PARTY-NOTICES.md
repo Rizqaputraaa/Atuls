@@ -1,6 +1,6 @@
 # Third-party notices
 
-Island Link is proprietary software. It includes the following open-source components, each used under its own licence.
+A-tuls is proprietary software. It includes the following open-source components, each used under its own licence.
 
 | Component | Version | Licence | Use |
 |---|---|---|---|
@@ -16,4 +16,4 @@ Apache-2.0 components: licensed under the Apache License, Version 2.0 (https://w
 
 Chromium and Electron's own notices are in `LICENSE` and `LICENSES.chromium.html` next to the application.
 
-"Dynamic Island" is a trademark of Apple Inc.; Island Link is not affiliated with or endorsed by Apple.
+"Dynamic Island" is a trademark of Apple Inc.; A-tuls is not affiliated with or endorsed by Apple.

@@ -298,7 +298,7 @@ const connectTo = async (host, code, side, label) => {
   if (r.ok) { say(''); $('#code').value = ''; if (code) await api.linkSetSide(side); return; }
   const e = String(r.error || '');
   say(/Wrong pairing code|denied/i.test(e) ? 'That code is not right. Check it on the other computer.'
-    : /ECONNREFUSED|ETIMEDOUT|timeout|EHOSTUNREACH|ENETUNREACH/i.test(e) ? 'Could not reach that computer. Is Island Link running there, on the same network?'
+    : /ECONNREFUSED|ETIMEDOUT|timeout|EHOSTUNREACH|ENETUNREACH/i.test(e) ? 'Could not reach that computer. Is A-tuls running there, on the same network?'
     : e || 'Could not connect');
 };
 const renderRecent = async () => {

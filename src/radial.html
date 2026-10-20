@@ -36,7 +36,7 @@
   @keyframes rise { from { opacity: 0; transform: translate(-50%, 8px); } to { opacity: 1; transform: translate(-50%, 0); } }
 </style>
 <div id="ring"></div>
-<div id="tag"><b id="tagname">Island Link</b><span id="hint">Center</span></div>
+<div id="tag"><b id="tagname">A-tuls</b><span id="hint">Center</span></div>
 <script src="assets/wheel.js"></script>
 <script>
 const W = window.Wheel, ring = document.getElementById('ring'), hint = document.getElementById('hint'), tagname = document.getElementById('tagname');
@@ -80,7 +80,7 @@ function render(id) {
   view = id; clear();
   const ws = id === 'main' ? null : data.workspaces[id];
   list = id === 'main' ? data.items : (ws ? ws.items : []);
-  tagname.textContent = ws ? ws.name : 'Island Link';
+  tagname.textContent = ws ? ws.name : 'A-tuls';
   hint.textContent = ws ? 'Back' : 'Center';
   document.documentElement.style.setProperty('--icon', data.cfg.appearance.icon + 'px');
   centerEl(!!ws);

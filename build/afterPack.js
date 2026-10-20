@@ -10,12 +10,12 @@ exports.default = async function afterPack(context) {
   await rcedit(exe, {
     icon: path.join(__dirname, 'icon.ico'),
     'version-string': {
-      ProductName: 'Island Link',
-      FileDescription: 'Island Link',
-      CompanyName: 'Mujib',
-      LegalCopyright: 'Copyright (c) Mujib',
-      OriginalFilename: 'Island Link.exe',
-      InternalName: 'Island Link',
+      ProductName: 'A-tuls',
+      FileDescription: 'A-tuls',
+      CompanyName: 'Rizqaputra',
+      LegalCopyright: 'Copyright (c) Rizqaputra',
+      OriginalFilename: 'A-tuls.exe',
+      InternalName: 'A-tuls',
     },
     'file-version': v,
     'product-version': v,

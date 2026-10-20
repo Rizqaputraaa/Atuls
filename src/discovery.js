@@ -1,4 +1,4 @@
-// Finds other computers running Island Link on the same network: every instance announces itself with a tiny UDP broadcast
+// Finds other computers running A-tuls on the same network: every instance announces itself with a tiny UDP broadcast
 // (every 2.5 s) and listens for the others. Nothing is sent beyond the local network and nothing sensitive is announced
 // (a random id, the computer name, the platform and the TCP port) - pairing still needs the 6-digit code.
 const dgram = require('dgram');

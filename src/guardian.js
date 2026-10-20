@@ -1,4 +1,4 @@
-// Watchdog process. Island Link installs system-wide mouse and keyboard hooks inside its main process. If that process freezes, every mouse and
+// Watchdog process. A-tuls installs system-wide mouse and keyboard hooks inside its main process. If that process freezes, every mouse and
 // key press of the whole computer waits for it, and a frozen process can end up stuck in the system for good (only a restart of Windows removes
 // it). So a separate, tiny process watches it: the app sends a beat every second; if the beats stop for HANG_MS the app is ended at once (before
 // the freeze can drag on) and a fresh copy is started. Started by main.js with: node guardian.js <app pid> <exe> <args json> <cwd> <log file> <restarts so far>

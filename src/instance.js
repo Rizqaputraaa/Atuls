@@ -1,9 +1,9 @@
-// One Island Link per user data folder, and it must still start when an earlier run left a "stuck" process behind.
+// One A-tuls per user data folder, and it must still start when an earlier run left a "stuck" process behind.
 //
 // Electron keeps one instance per data folder with a lock. A process that froze inside the system (it cannot be ended any more, not even by
 // End task: only a restart of Windows removes it) keeps that lock for ever, so every new start used to say "already running" and quit.
 // This module tells a running instance from a dead one: each instance writes its process id next to its settings, and a start that finds the
-// lock taken checks whether that process is still alive. If it is not, a second data folder is used ("Island Link (2)", with a copy of the
+// lock taken checks whether that process is still alive. If it is not, a second data folder is used ("A-tuls (2)", with a copy of the
 // settings), and when the first one is free again the newer settings are merged back.
 const fs = require('fs');
 const path = require('path');
@@ -69,9 +69,32 @@ function answersOnPort(port) {
   } catch { return true; } // cannot tell: do not risk two
 }
 
+// The app used to be called "Island Link": its settings (and the key that opens the sealed pairing tokens) live in a data folder with the old
+// name. The first start under the new name takes the newest of those over, so nothing has to be set up again.
+const LEGACY_FOLDERS = ['Island Link', 'island-link', 'IslandLink'];
+function migrateLegacy(base) {
+  try {
+    if (fs.existsSync(path.join(base, 'config.json'))) return null;
+    const parent = path.dirname(base);
+    let best = null;
+    for (const name of LEGACY_FOLDERS) {
+      const d = path.join(parent, name);
+      if (d === base) continue;
+      const t = mtime(path.join(d, 'config.json'));
+      if (t && (!best || t > best.t)) best = { d, t };
+    }
+    if (!best) return null;
+    fs.mkdirSync(base, { recursive: true });
+    fs.copyFileSync(path.join(best.d, 'config.json'), path.join(base, 'config.json'));
+    if (fs.existsSync(path.join(best.d, 'Local State'))) fs.copyFileSync(path.join(best.d, 'Local State'), path.join(base, 'Local State'));
+    return best.d;
+  } catch { return null; }
+}
+
 // -> { ok, dir, fallback } to go on, or { ok: false, running } to stop (running: another instance is really there)
 function claim(app) {
   const base = app.getPath('userData');
+  const migratedFrom = migrateLegacy(base);
   const dirs = [base, base + ' (2)', base + ' (3)'];
   for (let i = 0; i < dirs.length; i++) {
     const dir = dirs[i];
@@ -79,14 +102,14 @@ function claim(app) {
     if (app.requestSingleInstanceLock()) {
       writePid(dir);
       const merged = i === 0 ? mergeBack(base, dirs.slice(1)) : [];
-      return { ok: true, dir, fallback: i > 0, merged };
+      return { ok: true, dir, fallback: i > 0, merged, migratedFrom };
     }
     const other = readPid(dir);
-    // no process id on record (a run of an older version): a live Island Link answers on its port, a stuck leftover only holds the socket
+    // no process id on record (a run of an older version): a live A-tuls answers on its port, a stuck leftover only holds the socket
     if (other ? alive(other) : answersOnPort(Number(process.env.ISLAND_PORT) || 47800)) return { ok: false, running: true, pid: other };
     // the holder is dead: a stuck leftover; the next folder is tried
   }
   return { ok: false, running: false };
 }
 
-module.exports = { claim, alive, answersOnPort };
+module.exports = { claim, alive, answersOnPort, migrateLegacy };

@@ -1,12 +1,12 @@
 # Brief untuk audit eksternal (Gemini)
 
-Dokumen ini berisi semua pengetahuan yang dibutuhkan penilai luar untuk mengaudit **Island Link** dan memberi saran. Cara pakai: unggah/tempel file ini **bersama** isi folder `src/` (terutama `link.js`, `main.js`, `native.js`, `input-core.js`, `smooth.js`, `discovery.js`, `renderer/*`) dan dokumen `docs/ARSITEKTUR.md`, `docs/KOMERSIAL.md`. Jawab dalam bahasa Indonesia.
+Dokumen ini berisi semua pengetahuan yang dibutuhkan penilai luar untuk mengaudit **A-tuls** dan memberi saran. Cara pakai: unggah/tempel file ini **bersama** isi folder `src/` (terutama `link.js`, `main.js`, `native.js`, `input-core.js`, `smooth.js`, `discovery.js`, `renderer/*`) dan dokumen `docs/ARSITEKTUR.md`, `docs/KOMERSIAL.md`. Jawab dalam bahasa Indonesia.
 
 ---
 
 ## 1. Produk dalam satu paragraf
 
-Island Link adalah aplikasi desktop (Electron 44 + Node) untuk **Windows 10/11 dan macOS**: sebuah "pill" ala Dynamic Island di tepi atas layar, ditambah **berbagi mouse + keyboard + clipboard + file + screenshot** antar dua komputer di LAN (seperti Synergy/ShareMouse/WingDeck), pindah komputer cukup dengan **menggeser pointer keluar tepi layar** atau (opsional) **menoleh** (webcam lokal). Target: dijual sebagai utilitas desktop (Free + Pro), didistribusikan lewat GitHub Releases/situs sendiri (bukan App Store). Pengguna utama: pemilik PC Windows + MacBook di satu meja.
+A-tuls adalah aplikasi desktop (Electron 44 + Node) untuk **Windows 10/11 dan macOS**: sebuah "pill" ala Dynamic Island di tepi atas layar, ditambah **berbagi mouse + keyboard + clipboard + file + screenshot** antar dua komputer di LAN (seperti Synergy/ShareMouse/WingDeck), pindah komputer cukup dengan **menggeser pointer keluar tepi layar** atau (opsional) **menoleh** (webcam lokal). Target: dijual sebagai utilitas desktop (Free + Pro), didistribusikan lewat GitHub Releases/situs sendiri (bukan App Store). Pengguna utama: pemilik PC Windows + MacBook di satu meja.
 
 ## 2. Stack & batasan
 

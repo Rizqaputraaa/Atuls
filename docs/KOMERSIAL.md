@@ -1,4 +1,4 @@
-# Rencana Komersial Island Link
+# Rencana Komersial A-tuls
 
 Status: usulan awal (2026-10-19). Angka harga pasar di bawah **belum diverifikasi resmi**; cek halaman vendor sebelum memutuskan. Ini bukan nasihat hukum/pajak/keuangan.
 
@@ -27,7 +27,7 @@ Kalimat jualan yang jujur: *"Satu mouse dan keyboard untuk PC Windows dan Mac, d
 
 Tindakan: (a) hapus folder `Referensi/` dari paket distribusi dan repo publik; (b) buat `THIRD-PARTY-NOTICES.md` (pakai `license-checker`); (c) ganti `"license": "ISC"` di `package.json` menjadi `UNLICENSED`/lisensi proprietary; (d) simpan catatan bahwa kode referensi tidak disalin (sudah ada di `Referensi/CATATAN-LittleBigMouse.md`).
 
-Merek: jangan memakai "Dynamic Island" (merek Apple) atau "WingDeck" di nama/pemasaran. Cek ketersediaan nama "Island Link" (domain, merek dagang, App Store/Microsoft Store) sebelum branding.
+Merek: jangan memakai "Dynamic Island" (merek Apple) atau "WingDeck" di nama/pemasaran. Cek ketersediaan nama "A-tuls" (domain, merek dagang, App Store/Microsoft Store) sebelum branding.
 
 ## 3. Celah teknis yang HARUS ditutup sebelum rilis berbayar
 

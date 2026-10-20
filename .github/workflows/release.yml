@@ -31,7 +31,7 @@ jobs:
       - run: npm run ${{ matrix.script }}
       - uses: actions/upload-artifact@v4
         with:
-          name: island-link-${{ matrix.os }}
+          name: a-tuls-${{ matrix.os }}
           path: |
             dist/*.exe
             dist/*.dmg

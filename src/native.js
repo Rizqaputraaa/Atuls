@@ -334,7 +334,7 @@ function fullscreenForeground() {
 }
 
 // Windows lets a program send input only to windows at its own level of rights or lower. An app running as administrator (Task Manager, some
-// installers) therefore ignores everything Island Link injects. true = the window in front runs with more rights than this app (or cannot be
+// installers) therefore ignores everything A-tuls injects. true = the window in front runs with more rights than this app (or cannot be
 // inspected because of that), false = it does not, null = unknown.
 let elevFns = null;
 function winForegroundElevated() {

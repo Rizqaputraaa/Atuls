@@ -276,7 +276,7 @@ function openSettings(page) {
   const q = page ? { query: { p: String(page) } } : undefined;
   if (settingsWin && !settingsWin.isDestroyed()) { if (page) settingsWin.loadFile(path.join(__dirname, 'settings.html'), q); front(); return; }
   settingsWin = new BrowserWindow({
-    width: 940, height: 680, minWidth: 780, minHeight: 540, title: 'Island Link - Settings', backgroundColor: '#141416', autoHideMenuBar: true, show: false,
+    width: 940, height: 680, minWidth: 780, minHeight: 540, title: 'A-tuls - Settings', backgroundColor: '#141416', autoHideMenuBar: true, show: false,
     icon: path.join(__dirname, 'assets', 'icon.png'),
     webPreferences: { preload: path.join(__dirname, 'settings-preload.js'), contextIsolation: true, sandbox: false },
   });

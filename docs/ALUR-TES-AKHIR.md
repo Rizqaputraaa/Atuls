@@ -2,8 +2,8 @@
 
 Tujuan: menguji **semua menu dan fitur** satu per satu di PC (Windows) dan Mac, dengan bukti di log. Semua yang terjadi tercatat di satu file: **`island-run.log`**.
 
-- PC: `%APPDATA%\Island Link\island-run.log`
-- Mac: `~/Library/Application Support/island-link/island-run.log`
+- PC: `%APPDATA%\A-tuls\island-run.log`
+- Mac: `~/Library/Application Support/A-tuls/island-run.log`
 - Cara menyalin: **Settings → Diagnostics → Copy run log** (400 baris terakhir), lalu tempel ke chat. **Copy diagnostics** (di halaman yang sama) memberi ringkasan akurasi/latensi pointer.
 
 Yang dicatat otomatis: awal dan akhir aplikasi (termasuk "PREVIOUS RUN ENDED WITHOUT A CLEAN SHUTDOWN" kalau crash, lengkap dengan ringkasan laporan crash macOS), klik dan perpindahan tab (`ui: ...`), setiap perubahan pengaturan (`settings: ...`), koneksi, penyeberangan pointer (`event cross/entry/leave/takeback/state`), clipboard, file masuk/keluar, aksi tombol (`action ...`), menu radial (`radial menu ...`), color picker, glide scroll, dan semua error (`ERROR ...`, `UNCAUGHT EXCEPTION`).
@@ -13,7 +13,7 @@ Yang dicatat otomatis: awal dan akhir aplikasi (termasuk "PREVIOUS RUN ENDED WIT
 ---
 
 ## Uji otomatis (tanpa menyentuh mouse)
-Tulis `selftest` ke berkas perintah (`%APPDATA%\Island Link\control.cmd` di PC, `~/Library/Application Support/island-link/control.cmd` di Mac). Aplikasi membuka jendela Settings tersembunyi, membuka sepuluh halamannya satu per satu, memeriksa error skrip, memeriksa elemen halaman pill dan memuat modul menu radial; hasilnya di run log (`selftest: ...`). Hasil 2026-10-19: PC dan Mac lulus (10/10 halaman, tanpa error skrip). Perintah lain: `quit` dan `restart` (penutupan rapi).
+Tulis `selftest` ke berkas perintah (`%APPDATA%\A-tuls\control.cmd` di PC, `~/Library/Application Support/A-tuls/control.cmd` di Mac). Aplikasi membuka jendela Settings tersembunyi, membuka sepuluh halamannya satu per satu, memeriksa error skrip, memeriksa elemen halaman pill dan memuat modul menu radial; hasilnya di run log (`selftest: ...`). Hasil 2026-10-19: PC dan Mac lulus (10/10 halaman, tanpa error skrip). Perintah lain: `quit` dan `restart` (penutupan rapi).
 
 **Koneksi otomatis:** setelah salah satu komputer dimulai ulang atau koneksi putus, komputer dengan id lebih tinggi menyambung lagi sendiri ke perangkat yang pernah dipasangkan begitu ia terlihat di jaringan (`link: found ... again, connecting`). Koneksi yang diam 8 detik (kabel dicabut, Wi-Fi putus) ditutup otomatis (`link: no answer ... closing`). Tombol Disconnect dari pengguna mematikannya sampai koneksi berikutnya.
 

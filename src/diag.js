@@ -71,7 +71,7 @@ class Diag {
   summary() {
     const i = this.info() || {};
     const lines = [
-      `Island Link diagnostics - ${this.label} - up ${Math.round((Date.now() - this.started) / 1000)} s`,
+      `A-tuls diagnostics - ${this.label} - up ${Math.round((Date.now() - this.started) / 1000)} s`,
       `link: ${i.linked ? 'connected to ' + i.peer : 'not connected'} | state ${i.state} | pointer owner ${i.owner} | edge resistance ${i.edge} | game guard ${i.guard}`,
       `screens: ${i.screens || '-'}`,
       `layout: ${i.layout || '-'}`,

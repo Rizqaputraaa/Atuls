@@ -1,6 +1,6 @@
-# Brief optimasi untuk Gemini: Island Link
+# Brief optimasi untuk Gemini: A-tuls
 
-Tolong bertindak sebagai insinyur performa dan arsitektur desktop yang berpengalaman (Electron, Node native addons, API input Windows dan macOS). Tujuan: **membuat Island Link lebih ringan (CPU, memori, baterai, ukuran paket, latensi) tanpa mengurangi fitur atau menambah regresi.**
+Tolong bertindak sebagai insinyur performa dan arsitektur desktop yang berpengalaman (Electron, Node native addons, API input Windows dan macOS). Tujuan: **membuat A-tuls lebih ringan (CPU, memori, baterai, ukuran paket, latensi) tanpa mengurangi fitur atau menambah regresi.**
 
 Cara pakai: lampirkan file ini bersama `GEMINI-AUDIT-LENGKAP.md` (berisi seluruh kode sumber di Bagian E, arsitektur di Bagian B, dan riwayat di Bagian D). Jawab dalam bahasa Indonesia. Dasarkan jawaban pada kode yang ada; kalau kamu mengasumsikan sesuatu, katakan itu asumsi. Jangan menyarankan menulis ulang dari awal.
 
@@ -8,7 +8,7 @@ Cara pakai: lampirkan file ini bersama `GEMINI-AUDIT-LENGKAP.md` (berisi seluruh
 
 ## 1. Produk singkat
 
-Island Link: aplikasi Electron 44 untuk Windows 10/11 dan macOS. Pill ala Dynamic Island di tepi atas layar, plus berbagi mouse, keyboard, clipboard, file, screenshot antara dua komputer di LAN (WebSocket terenkripsi, port 47800; penemuan UDP 47801). Pointer pindah komputer saat digeser keluar tepi layar, atau saat pengguna menoleh (kamera lokal, MediaPipe). Ada menu radial, color picker, efek tepi layar, animasi startup, dan pintasan keyboard yang bisa direkam. Akan dijual (bukan lewat App Store). Aplikasi berjalan terus di latar belakang sepanjang hari, jadi **biaya saat idle adalah masalah utama**.
+A-tuls: aplikasi Electron 44 untuk Windows 10/11 dan macOS. Pill ala Dynamic Island di tepi atas layar, plus berbagi mouse, keyboard, clipboard, file, screenshot antara dua komputer di LAN (WebSocket terenkripsi, port 47800; penemuan UDP 47801). Pointer pindah komputer saat digeser keluar tepi layar, atau saat pengguna menoleh (kamera lokal, MediaPipe). Ada menu radial, color picker, efek tepi layar, animasi startup, dan pintasan keyboard yang bisa direkam. Akan dijual (bukan lewat App Store). Aplikasi berjalan terus di latar belakang sepanjang hari, jadi **biaya saat idle adalah masalah utama**.
 
 ## 2. Hasil pengukuran (PC Windows 11, 16 inti logis, 2 monitor, aplikasi mode pengembangan)
 
@@ -27,7 +27,7 @@ Temuan yang sudah diperbaiki, sebagai konteks (jangan diulang, tapi beri tahu ka
 - Tiga jendela efek tepi layar (transparan, tersembunyi, dibuat di awal) memakai sekitar 110 MB per jendela. Sekarang hanya dibuat saat link tersambung.
 - Pembacaan kamera 24 fps terus-menerus. Sekarang turun ke 10 fps saat kepala diam lebih dari 1,5 detik atau tidak ada wajah. Menurunkan resolusi kamera 640x480 ke 320x240 hanya menghemat sekitar 4%, jadi dibatalkan.
 
-Ukuran paket Windows (electron-builder, NSIS): sekitar 146 MB installer, 414 MB terpasang. Sebagian besar adalah Electron itu sendiri (`Island Link.exe` 236 MB).
+Ukuran paket Windows (electron-builder, NSIS): sekitar 146 MB installer, 414 MB terpasang. Sebagian besar adalah Electron itu sendiri (`A-tuls.exe` 236 MB).
 
 Skrip pengukuran yang dipakai (PowerShell): ambil `Get-Process` semua `electron.exe` milik aplikasi, catat `CPU` (detik prosesor kumulatif) di awal dan di akhir interval, bagi dengan lama interval dan jumlah inti, kelompokkan menurut `--type=` pada command line.
 
