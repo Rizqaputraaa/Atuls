@@ -583,7 +583,15 @@ class Link extends EventEmitter {
 
   // Windows mouse hook. Returns true to swallow the event.
   onWinMouse(msg, i) {
-    try { return this.onWinMouseInner(msg, i); } catch (e) { this.dc('error'); this.d('error', { where: 'hook', msg: String(e && e.message) }); return false; }
+    this.inHook = true;
+    try { return this.onWinMouseInner(msg, i); } catch (e) { this.dc('error'); this.d('error', { where: 'hook', msg: String(e && e.message) }); return false; } finally { this.inHook = false; }
+  }
+
+  // SetCursorPos makes the system run the mouse hook once more (as an "injected" move) on this very thread. Called from inside the hook
+  // callback it can leave the system and this thread waiting for each other, so from there it is postponed until the callback has returned.
+  placeCursor(x, y) {
+    if (this.inHook) { setImmediate(() => this.input.setPos(x, y)); return; }
+    this.input.setPos(x, y);
   }
 
   onWinMouseInner(msg, i) {
@@ -639,7 +647,7 @@ class Link extends EventEmitter {
     // the cursor is frozen at the anchor, so the position the system reports is anchor + this event's movement
     const dx = i.x - this.anchor.x, dy = i.y - this.anchor.y;
     if (Math.abs(dx) > 400 || Math.abs(dy) > 400) {
-      if (++this.farMoves > 5) { this.farMoves = 0; this.input.setPos(this.anchor.x, this.anchor.y); this.parkUntil = Date.now() + 25; }
+      if (++this.farMoves > 5) { this.farMoves = 0; this.placeCursor(this.anchor.x, this.anchor.y); this.parkUntil = Date.now() + 25; }
       return true;
     }
     this.farMoves = 0;
@@ -829,7 +837,7 @@ class Link extends EventEmitter {
       this.parkUntil = Date.now() + 25;
       this.farMoves = 0;
       this.send({ t: 'enter', x: c.h.x, y: c.h.y, dir: c.dir, mpp: d.mpp });
-      this.input.setPos(this.anchor.x, this.anchor.y);
+      this.placeCursor(this.anchor.x, this.anchor.y);
       this.notify();
     } else if (this.state === 'controlling') {
       if (this.external) return;
@@ -849,7 +857,7 @@ class Link extends EventEmitter {
       if (dx || dy) this.queueMove(dx, dy);
       if (Math.abs(x - this.anchor.x) > DRIFT || Math.abs(y - this.anchor.y) > DRIFT) {
         this.last = { ...this.anchor };
-        this.input.setPos(this.anchor.x, this.anchor.y);
+        this.placeCursor(this.anchor.x, this.anchor.y);
       }
     }
   }
@@ -925,7 +933,7 @@ class Link extends EventEmitter {
     this.parkUntil = Date.now() + 25;
     this.farMoves = 0;
     this.send({ t: 'attach', mpp: d.mpp });
-    this.input.setPos(this.anchor.x, this.anchor.y);
+    this.placeCursor(this.anchor.x, this.anchor.y);
     this.notify();
     return true;
   }
@@ -965,7 +973,7 @@ class Link extends EventEmitter {
     this.parkUntil = Date.now() + 25;
     this.farMoves = 0;
     this.send({ t: 'enter', x: h.x, y: h.y, dir: this.status().peerSide, mpp: d.mpp });
-    this.input.setPos(this.anchor.x, this.anchor.y);
+    this.placeCursor(this.anchor.x, this.anchor.y);
     this.notify();
     return true;
   }
@@ -1028,7 +1036,7 @@ class Link extends EventEmitter {
     }
     this.placed(this.virt.x, this.virt.y);
     this.lastSet = { x: Math.round(this.virt.x), y: Math.round(this.virt.y) };
-    this.input.setPos(this.virt.x, this.virt.y);
+    this.placeCursor(this.virt.x, this.virt.y);
 
   }
 
@@ -1156,7 +1164,7 @@ class Link extends EventEmitter {
     this.owner = 'me';
     this.cooldownUntil = Date.now() + 150;
     this.send({ t: 'release' });
-    this.input.setPos(this.anchor.x, this.anchor.y);
+    this.placeCursor(this.anchor.x, this.anchor.y);
     this.notify();
   }
 
@@ -1279,7 +1287,7 @@ class Link extends EventEmitter {
         this.virt = { x: r.x, y: r.y };
         this.lastSet = { x: Math.round(r.x), y: Math.round(r.y) };
         this.placed(this.virt.x, this.virt.y);
-        this.input.setPos(this.virt.x, this.virt.y);
+        this.placeCursor(this.virt.x, this.virt.y);
         this.notify();
         this.verifyLanding('entry', this.virt, { x: m.x, y: m.y });
         break;
@@ -1309,7 +1317,7 @@ class Link extends EventEmitter {
         this.owner = 'me';
         this.cooldownUntil = Date.now() + 150;
         if (r) {
-          this.input.setPos(
+          this.placeCursor(
             Math.min(r.d.x + r.d.w - 1, Math.max(r.d.x, r.x + vx * back)),
             Math.min(r.d.y + r.d.h - 1, Math.max(r.d.y, r.y + vy * back)),
           );

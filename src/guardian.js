@@ -6,7 +6,7 @@ const fs = require('fs');
 const { spawn } = require('child_process');
 
 const [mainPid, exe, argsJson, cwd, logFile, restartsSoFar] = [Number(process.argv[2]), process.argv[3], process.argv[4], process.argv[5], process.argv[6], Number(process.argv[7] || 0)];
-const HANG_MS = Number(process.env.ISLAND_HANG_MS) || 10000; // longer than any wait the app does on purpose
+const HANG_MS = Number(process.env.ISLAND_HANG_MS) || 6000; // longer than any wait the app does on purpose (nothing in the app blocks its main thread that long any more)
 const MAX_RESTARTS = 3; // in a row: a freeze that keeps coming back is not hidden by restarting for ever
 const startedAt = Date.now();
 
