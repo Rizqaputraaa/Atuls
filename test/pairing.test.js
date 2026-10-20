@@ -71,3 +71,23 @@ test('a wrong code is refused, and five wrong codes lock and change the code', a
   await assert.rejects(b.connect('127.0.0.1', a.pin, 'right', null, a.port), /Too many wrong codes/);
   stopAll(a, b);
 });
+
+test('when the usual port is held by something else, the next free port is used and reported', async () => {
+  const a = mk();                        // holds a port
+  const mem = {};
+  const store = { get: (k, d) => (k in mem ? mem[k] : d), set: (k, v) => { mem[k] = v; } };
+  const d = [{ x: 0, y: 0, w: 1920, h: 1080, dx: 0, dy: 0, dw: 300, dh: 170, mpp: 0.16 }];
+  const b = new Link({ input: { releaseAll() {}, setPos() {}, getPos: () => ({ x: 1, y: 1 }) }, getDisplays: () => d, store, downloadDir: '.', port: a.port }); // asks for the same port
+  b.start();
+  await new Promise((r) => setTimeout(r, 300));
+  assert.strictEqual(b.port, a.port + 1);
+  assert.strictEqual(b.status().port, a.port + 1);
+  // and a computer that knows that port can pair with it
+  const sasB = once(b, 'sas'), sasC = once(a, 'sas');
+  const done = a.connect('127.0.0.1', b.pin, 'right', null, b.port);
+  await Promise.all([sasB, sasC]);
+  a.sasAnswer(true); b.sasAnswer(true);
+  await done;
+  assert.ok(a.sock && b.sock);
+  stopAll(a, b);
+});

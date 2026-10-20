@@ -79,14 +79,23 @@ function macDisplaySizes() {
   } catch (e) { console.error('[island] display sizes unavailable:', e.message); return []; }
 }
 
-// Windows: the monitor reports its panel size in whole centimetres through WMI (EDID).
-function winMonitorSizes() {
-  if (process.platform !== 'win32') return [];
+// Windows: the monitor reports its panel size in whole centimetres through WMI (EDID). Asking takes a PowerShell run (about half a second, and
+// up to several when the computer is busy waking up), so it never happens on the app's main thread: the answer is read in the background
+// and kept; callers use the last answer at once and are told when a new one arrives.
+let winSizesCache = [], winSizesBusy = false, winSizesAt = 0;
+function winMonitorSizes() { return winSizesCache; }
+function refreshWinMonitorSizes(done) {
+  if (process.platform !== 'win32' || winSizesBusy || Date.now() - winSizesAt < 4000) return; // not again within a burst of display notifications
+  winSizesBusy = true; winSizesAt = Date.now();
   try {
-    const out = require('child_process').execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
-      "Get-CimInstance -Namespace root\\wmi -ClassName WmiMonitorBasicDisplayParams | ForEach-Object { '{0},{1}' -f $_.MaxHorizontalImageSize, $_.MaxVerticalImageSize }"], { timeout: 5000, windowsHide: true }).toString();
-    return out.split(/\r?\n/).map((l) => l.trim().split(',').map(Number)).filter((a) => a.length === 2 && a[0] > 0 && a[1] > 0).map(([cmw, cmh]) => ({ mmw: cmw * 10, mmh: cmh * 10 }));
-  } catch (e) { console.error('[island] monitor sizes unavailable:', e.message); return []; }
+    require('child_process').execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
+      "Get-CimInstance -Namespace root\\wmi -ClassName WmiMonitorBasicDisplayParams | ForEach-Object { '{0},{1}' -f $_.MaxHorizontalImageSize, $_.MaxVerticalImageSize }"], { timeout: 8000, windowsHide: true }, (err, out) => {
+      winSizesBusy = false;
+      if (err) { console.error('[island] monitor sizes unavailable:', err.message); return; }
+      const sizes = String(out).split(/\r?\n/).map((l) => l.trim().split(',').map(Number)).filter((x) => x.length === 2 && x[0] > 0 && x[1] > 0).map(([cmw, cmh]) => ({ mmw: cmw * 10, mmh: cmh * 10 }));
+      if (JSON.stringify(sizes) !== JSON.stringify(winSizesCache)) { winSizesCache = sizes; if (done) done(); }
+    });
+  } catch (e) { winSizesBusy = false; console.error('[island] monitor sizes unavailable:', e.message); }
 }
 
 // Windows lists no position for those sizes, so pair each screen with the reported size of the same shape.
@@ -758,4 +767,4 @@ const macMouse = {
   up: (b, x, y, state) => CG_BUTTON[b] && macPost(CG_BUTTON[b].up, x, y, CG_BUTTON[b].n, state || 1),
 };
 
-module.exports = { macDisplaySizes, winMonitorSizes, matchSizes, reinstallHooks, removeHooks, winIdleMs, winModsHeld, installScrollTap, highResTimer, winCursor, setCursorHidden, installKeyBlocker, installMouseHook, macMouse, macMediaKey, macDragFiles, screenPixels, macHotKeyInfo, macPostHotKey, loadWin: () => loadWin() };
+module.exports = { macDisplaySizes, winMonitorSizes, refreshWinMonitorSizes, matchSizes, reinstallHooks, removeHooks, winIdleMs, winModsHeld, installScrollTap, highResTimer, winCursor, setCursorHidden, installKeyBlocker, installMouseHook, macMouse, macMediaKey, macDragFiles, screenPixels, macHotKeyInfo, macPostHotKey, loadWin: () => loadWin() };

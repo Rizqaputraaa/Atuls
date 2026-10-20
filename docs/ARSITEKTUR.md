@@ -91,6 +91,10 @@ Disimpan di `store` (JSON di folder userData `island-link`): `deviceId`, daftar 
 
 Kamera tersembunyi membaca landmark wajah (MediaPipe, delegate GPU lalu CPU) pada 24 fps / 640×480. Sinyal = posisi sepanjang garis antara dua titik (yaw, pitch) hasil kalibrasi. Dwell 140 ms, histeresis 25% setengah jarak, EMA α=0,6; wajah hilang = tidak pernah pindah. Pindah ditunda saat sedang mengetik (<1 s, maks 4 s). Jika PC sedang dikendalikan lalu pengguna menoleh ke Mac, `takeback` dikirim tanpa kamera Mac. Video tidak pernah dikirim.
 
+## 8b. Perlindungan dari macet (guardian.js, instance.js)
+
+Hook input global berjalan di proses utama, jadi proses utama yang membeku menyendatkan input seluruh komputer, dan thread yang tersangkut di Windows membuat proses tak bisa dimatikan (zombie yang menahan port dan kunci instance). Perlindungan berlapis: (1) `guardian.js`, proses terpisah (detached agar tidak ikut mati bersama aplikasi), menerima detak tiap 1 detik dari proses utama; 10 detik tanpa detak = `SIGKILL` pada aplikasi lalu start salinan baru (maksimal 3 kali berturut-turut; jeda tidur tidak dihitung); (2) `instance.js` menentukan folder data sebelum pengaturan dibaca: bila kunci dipegang proses yang sudah mati (process id di `instance.pid`, atau tidak ada yang menjawab di port bila tidak ada catatan), dipakai folder kedua dengan salinan `config.json` dan `Local State`; (3) server mencoba port 47800..47809 dan mengumumkan port nyata lewat discovery; (4) pekerjaan yang bisa lama (ukuran monitor lewat PowerShell) tidak boleh berjalan sinkron di proses utama.
+
 ## 9. Keterbatasan yang diketahui
 
 - Lalu lintas LAN terenkripsi (lihat bagian 3b), tetapi desainnya belum diaudit pihak luar; PIN pairing 6 digit lemah terhadap MITM aktif saat pairing pertama.

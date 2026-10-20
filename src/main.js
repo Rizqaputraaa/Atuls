@@ -12,6 +12,8 @@ const HK = require('./hotkeys');
 const KEY_NAMES = Object.keys(require('uiohook-napi').UiohookKey);
 const { Calibrator, ZoneTracker } = require('./gaze');
 const { keyboard, Key } = require('@nut-tree-fork/nut-js');
+// which data folder this run uses (and whether another Island Link is really running): decided before the settings are read
+const instance = require('./instance').claim(app);
 
 const MAC = process.platform === 'darwin';
 // both platforms: a pill at the top edge, centred (on a notched MacBook it is long, with an empty middle for the notch)
@@ -68,6 +70,7 @@ function refreshPhysicalSizes() {
     mm = list.map((d) => known.find((k) => Math.abs(k.x - d.x) < 2 && Math.abs(k.y - d.y) < 2 && Math.abs(k.w - d.w) < 2) || null);
   } else if (process.platform === 'win32') {
     mm = native.matchSizes(list, native.winMonitorSizes());
+    native.refreshWinMonitorSizes(() => { physical = null; settleDisplays(); }); // a fresh answer from the monitors arrives in the background
   }
   physical = mm;
 }
@@ -1032,15 +1035,19 @@ function createTray() {
 
 app.whenReady().then(() => {
   console.log('[island] starting');
-  if (!app.requestSingleInstanceLock()) {
+  if (!instance.ok) {
     console.log('[island] another instance is already running - quitting this one');
-    try { dialog.showMessageBoxSync({ type: 'info', title: 'Island Link', message: 'Island Link is already running.', detail: 'Look for it at the top of the screen (the pill) or in the system tray. If it does not respond, restart the computer and start it again.', buttons: ['OK'] }); } catch {}
+    if (instance.running) { try { dialog.showMessageBoxSync({ type: 'info', title: 'Island Link', message: 'Island Link is already running.', detail: 'Look for it at the top of the screen (the pill) or in the system tray.' }); } catch {} }
     return app.quit();
   }
+  if (instance.fallback) lifecycle.line('the usual data folder is held by a stuck leftover of an earlier run: using ' + instance.dir);
+  if (instance.merged && instance.merged.length) lifecycle.line('newer settings from ' + instance.merged.join(', ') + ' were merged back');
   if (process.platform === 'darwin') app.dock.hide();
   // `electron . --quit` from a second launch asks this instance to close itself properly (killing it can leave it stuck)
   app.on('second-instance', (_e, argv) => { if (argv.includes('--quit')) app.quit(); });
   createWindow();
+  startGuardian();
+  if (process.env.ISLAND_RECOVERED) { lifecycle.line('restarted by the watchdog after a freeze (' + process.env.ISLAND_RECOVERED + ')'); setTimeout(() => toast('Island Link restarted', 'It had stopped answering and was restarted', 'err'), 5000); }
 
   diag = new Diag(app.getPath('userData'), process.platform === 'win32' ? 'PC (Windows)' : 'Mac', () => {
     const s = link ? link.status() : {};
@@ -1195,12 +1202,13 @@ app.whenReady().then(() => {
       // the installed app answers only the harmless commands; the test commands (typing, pairing, settings changes) exist for development runs
       if (app.isPackaged && !/^(quit|restart|selftest|fx|splash)$/.test(c)) { lifecycle.line('control command ignored in the installed app: ' + c.split(':')[0]); return; }
       lifecycle.line('control command: ' + c);
-      if (c.startsWith('connect:')) { link.connect(c.split(':')[1], '', 'right').then(() => lifecycle.line('connect: connected with the saved token')).catch((e) => lifecycle.line('connect failed: ' + e.message)); }
+      if (c.startsWith('connect:')) { (() => { const h = c.split(':')[1]; const near = global.__discovery && global.__discovery.list().find((n) => n.host === h); return link.connect(h, '', 'right', null, near && near.port); })().then(() => lifecycle.line('connect: connected with the saved token')).catch((e) => lifecycle.line('connect failed: ' + e.message)); }
       else if (c === 'sharing:off' || c === 'sharing:on') { store.set('clipboard', c === 'sharing:on'); lifecycle.line('test: clipboard sharing ' + c.slice(8)); }
       else if (c === 'perf:shotui') { (async () => { const w = new BrowserWindow({ show: false, width: 940, height: 680, webPreferences: { preload: path.join(__dirname, 'settings-preload.js'), contextIsolation: true, sandbox: false } }); await w.loadFile(path.join(__dirname, 'settings.html')); await new Promise((r) => setTimeout(r, 2000)); const r = await w.webContents.executeJavaScript("(async () => { const out = []; const sleep = (ms) => new Promise((r) => setTimeout(r, ms)); try { document.querySelector('aside button[data-p=sharing]').click(); await sleep(500); const num = document.querySelector('#main input[type=number]'); out.push('number input: ' + (num ? 'found value=' + num.value + ' disabled=' + num.disabled + ' readonly=' + num.readOnly : 'MISSING')); const sel = Array.from(document.querySelectorAll('#main select')).find((x) => Array.from(x.options).some((o) => o.value === 'jpg')); out.push('format select: ' + (sel ? 'found value=' + sel.value + ' disabled=' + sel.disabled : 'MISSING')); const state0 = await window.api.shotGet(); if (num) { num.value = '640'; num.dispatchEvent(new Event('change', { bubbles: true })); await sleep(800); } const s1 = await window.api.shotGet(); out.push('after typing 640 + change: backend limit=' + s1.limitMb); const num2 = document.querySelector('#main input[type=number]'); out.push('after redraw the field shows ' + (num2 && num2.value)); if (sel) { sel.value = 'jpg'; sel.dispatchEvent(new Event('change', { bubbles: true })); await sleep(800); } const s2 = await window.api.shotGet(); out.push('after choosing jpg: backend format=' + s2.format); await window.api.shotSet({ limitMb: state0.limitMb, format: state0.format }); } catch (e) { out.push('ERROR ' + e.message); } return out.join(' | '); })()"); lifecycle.line('shot ui probe: ' + r); w.destroy(); })().catch((e) => lifecycle.line('shot ui probe failed: ' + e.message)); }
       else if (c.startsWith('sync:')) { const [, k, v] = c.split(':'); lifecycle.line('test: ' + syncTest(k, v)); }
       else if (c === 'perf:shottype') { (async () => { const w = new BrowserWindow({ show: true, x: -3000, y: -3000, width: 940, height: 680, focusable: true, webPreferences: { preload: path.join(__dirname, 'settings-preload.js'), contextIsolation: true, sandbox: false } }); await w.loadFile(path.join(__dirname, 'settings.html')); await new Promise((r) => setTimeout(r, 2000)); const js = (t) => w.webContents.executeJavaScript(t); await js("document.querySelector('aside button[data-p=sharing]').click()"); await new Promise((r) => setTimeout(r, 600)); const before = await js("(() => { const n = document.querySelector('#main input[type=number]'); n.focus(); n.select(); return n.value + ' focused=' + (document.activeElement === n); })()"); w.webContents.focus(); await w.webContents.insertText('1000'); await new Promise((r) => setTimeout(r, 300)); const typed = await js("document.querySelector('#main input[type=number]').value"); w.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Enter' }); w.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Enter' }); await js("document.querySelector('#main input[type=number]').blur()"); await new Promise((r) => setTimeout(r, 900)); const after = await js("(async () => { const st = await window.api.shotGet(); const n = document.querySelector('#main input[type=number]'); return 'backend=' + st.limitMb + ' field=' + (n && n.value); })()"); lifecycle.line('shot typing probe: before ' + before + ' | after typing field=' + typed + ' | after Enter/blur: ' + after); await js("window.api.shotSet({ limitMb: 500 })"); w.destroy(); })().catch((e) => lifecycle.line('shot typing probe failed: ' + e.message)); }
       else if (c === 'gazetest:done') finishGazeTest(true);
+      else if (c.startsWith('hang:')) { const ms = Number(c.slice(5)) || 20000; lifecycle.line('test: freezing the main thread for ' + ms + ' ms'); const end = Date.now() + ms; while (Date.now() < end) { /* frozen on purpose */ } }
       else if (c === 'perf:pointerorder') { (async () => { const w = new BrowserWindow({ show: false, width: 940, height: 680, webPreferences: { preload: path.join(__dirname, 'settings-preload.js'), contextIsolation: true, sandbox: false } }); await w.loadFile(path.join(__dirname, 'settings.html')); await new Promise((r) => setTimeout(r, 2000)); const r = await w.webContents.executeJavaScript("(async () => { document.querySelector('aside button[data-p=pointer]').click(); await new Promise((r) => setTimeout(r, 400)); return Array.from(document.querySelectorAll('#main .row .t b, #main .group')).map((e) => e.innerText).join(' | '); })()"); lifecycle.line('pointer page order: ' + r); w.destroy(); })().catch((e) => lifecycle.line('order probe failed: ' + e.message)); }
       else if (c === 'gaze:on' || c === 'gaze:off') { store.set('gazeOn', c === 'gaze:on'); if (c === 'gaze:on') { gazeWakeUntil = Date.now() + 10 * 60 * 1000; gazeSuspended = false; } applyGaze(); lifecycle.line('test: look to switch ' + c.slice(5) + ', camera window ' + (gazeWin ? 'open' : 'closed') + ', idle ' + powerMonitor.getSystemIdleTime() + ' s'); }
       else if (c === 'gaze:state') lifecycle.line('test: camera permission=' + systemPreferences.getMediaAccessStatus('camera') + ' gaze on=' + gazeOn() + ' camera=' + gazeCam + ' window=' + !!gazeWin + ' suspended=' + gazeSuspended + ' idle=' + powerMonitor.getSystemIdleTime() + ' s');
@@ -1352,7 +1360,11 @@ app.whenReady().then(() => {
   ipcMain.handle('shot:open', () => { if (shotDir()) { fs.mkdirSync(shotDir(), { recursive: true }); shell.openPath(shotDir()); } });
   ipcMain.handle('clip:set', (_e, v) => { lifecycle.line('settings: share clipboard ' + (v ? 'on' : 'off')); store.set('clipboard', !!v); syncOutFn(['clipboard']); });
   ipcMain.handle('link:connect', async (_e, host, pin, side) => {
-    try { await link.connect(host, pin, side); return { ok: true }; } catch (e) { return { ok: false, error: e.message }; }
+    // the other computer may not be on the usual port (a stuck leftover of an earlier run holds it): its announced port, or the one used last time
+    const near = global.__discovery && global.__discovery.list().find((n) => n.host === host);
+    const known = link.recentList().find((x) => x.host === host);
+    const port = (near && near.port) || (known && known.port) || undefined;
+    try { await link.connect(host, pin, side, null, port); return { ok: true }; } catch (e) { return { ok: false, error: e.message }; }
   });
   ipcMain.handle('link:send-file', async (_e, p) => { try { await link.sendFile(p); return { ok: true }; } catch (e) { toast('Could not send the file', String(e.message).slice(0, 70), 'err'); return { ok: false, error: e.message }; } });
   ipcMain.handle('link:recent', () => link.recentList());
@@ -1408,11 +1420,32 @@ async function selfTest() {
   L('done');
 }
 
+// A separate watchdog process ends and restarts the app if its main thread stops answering (see guardian.js).
+let guardian = null;
+function startGuardian() {
+  if (process.env.ISLAND_NO_GUARD) return;
+  try {
+    const { fork } = require('child_process');
+    const g = fork(path.join(__dirname, 'guardian.js'), [String(process.pid), process.execPath, JSON.stringify(process.argv.slice(1)), process.cwd(), lifecycle.file || '', String(process.env.ISLAND_RECOVERED || 0)], {
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, stdio: ['ignore', 'ignore', 'ignore', 'ipc'], windowsHide: true,
+      detached: true, // it must outlive the app: it ends a frozen app and starts the next one (without this it is ended together with the app)
+    });
+    guardian = g;
+    const beat = () => { try { if (g.connected) g.send('beat'); } catch {} };
+    beat();
+    const t = setInterval(beat, 1000);
+    g.on('exit', () => { clearInterval(t); if (guardian === g) guardian = null; });
+    g.on('error', () => {});
+  } catch (e) { lifecycle.line('watchdog could not start: ' + e.message); }
+}
+function stopGuardian() { try { if (guardian) { guardian.send('stop'); guardian.kill(); } } catch {} guardian = null; }
+
 function shutdownAll(why) {
   if (shuttingDown) return;
   shuttingDown = true;
   lifecycle.line('shutting down (' + why + '): closing sockets, camera and hooks');
   gazeQuit = true;
+  stopGuardian();
   try { diag && diag.stop(); } catch {}
   try { gazeWin && !gazeWin.isDestroyed() && gazeWin.destroy(); } catch {}
   try { global.__discovery && global.__discovery.stop(); } catch {}

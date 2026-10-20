@@ -40,7 +40,8 @@ class Link extends EventEmitter {
   constructor({ input, getDisplays, store, downloadDir, diag, port }) {
     super();
     this.diag = diag || null;
-    this.port = port || PORT;
+    this.basePort = port || PORT; // the port this computer is expected on (the one other computers try)
+    this.port = this.basePort; // the port it really listens on: a stuck leftover of an earlier run can hold the usual one
     this.lastMoveRx = 0;
     this.pingTimer = null;
     this.downloadDir = downloadDir;
@@ -135,10 +136,22 @@ class Link extends EventEmitter {
     if (this.peer && (v === 'controlled' || (v === 'idle' && prev === 'controlling'))) this.emitSwitch(v, prev);
   }
 
-  start() {
-    this.server = new WebSocketServer({ port: this.port });
-    this.server.on('connection', (ws) => this.accept(ws));
-    this.server.on('error', (e) => this.emit('error', e.message));
+  // Listens on the usual port, or on the next free one when something (a stuck leftover of an earlier run) holds it. The port is announced to
+  // the other computers (discovery) and remembered with the recent computers, so they find it.
+  start() { this.listen(this.basePort, 0); }
+  listen(port, tried) {
+    const srv = new WebSocketServer({ port });
+    this.server = srv;
+    srv.on('connection', (ws) => this.accept(ws));
+    srv.on('listening', () => {
+      this.port = port;
+      if (tried) { try { require('./lifecycle').line('link: port ' + this.basePort + ' is taken, listening on ' + port); } catch {} }
+      this.notify();
+    });
+    srv.on('error', (e) => {
+      if (e && e.code === 'EADDRINUSE' && tried < 9) { try { srv.close(); } catch {} this.listen(port + 1, tried + 1); return; }
+      this.emit('error', e && e.message);
+    });
   }
 
   // Close everything the network side holds. A hard exit with sockets still open can leave the process stuck while the system waits for
@@ -153,7 +166,7 @@ class Link extends EventEmitter {
   status() {
     return {
       pin: this.pin,
-      port: PORT,
+      port: this.port,
       addresses: Object.values(os.networkInterfaces()).flat().filter((i) => i.family === 'IPv4' && !i.internal).map((i) => i.address),
       name: os.hostname(),
       platform: process.platform,
@@ -249,7 +262,8 @@ class Link extends EventEmitter {
 
   connect(host, pin, side, peerId, port, noToken) {
     return new Promise((resolve, reject) => {
-      const ws = new SecureChannel(new WebSocket(`ws://${host}:${port || this.port}`), 'client');
+      const ws = new SecureChannel(new WebSocket(`ws://${host}:${port || this.basePort}`), 'client');
+      this.dialPort = port || this.basePort;
       let timer = setTimeout(() => { ws.terminate(); reject(new Error('Timeout')); }, 5000);
       const saved = noToken ? null : (this.store.get('peers', {})[host] || (peerId && this.store.get('peerTokens', {})[peerId])); // the saved token also works from a new address
       ws.on('ready', () => ws.send(JSON.stringify({
@@ -314,7 +328,9 @@ class Link extends EventEmitter {
     if (this.pingTimer.unref) this.pingTimer.unref();
     if (info && info.id && host) {
       const recent = this.store.get('recent', {});
-      recent[info.id] = { id: info.id, name: info.name, host, side, lastSeen: Date.now() };
+      const prevPort = recent[info.id] && recent[info.id].port;
+      recent[info.id] = { id: info.id, name: info.name, host, side, lastSeen: Date.now(), port: this.dialPort || prevPort || undefined };
+      this.dialPort = null;
       this.store.set('recent', recent);
       this.dedupeRecent();
     }
