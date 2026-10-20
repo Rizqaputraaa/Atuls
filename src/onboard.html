@@ -1,0 +1,35 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Island Link - allow access</title>
+<style>
+  :root { color-scheme: dark; --bg: #141416; --fg: #f2f2f4; --mut: #9b9ba3; --ok: #30d158; --card: #1f1f23; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); font: 14px/1.5 -apple-system, "Segoe UI", system-ui, sans-serif; }
+  body { padding: 24px 28px; box-sizing: border-box; user-select: none; }
+  h1 { font-size: 18px; margin: 0 0 6px; }
+  p { margin: 0 0 14px; color: var(--mut); }
+  .step { display: flex; align-items: center; gap: 12px; background: var(--card); border-radius: 12px; padding: 12px 14px; margin-bottom: 10px; }
+  .num { width: 26px; height: 26px; border-radius: 50%; background: #2c2c31; display: grid; place-items: center; font-weight: 700; flex: none; }
+  .txt { flex: 1; }
+  .txt b { display: block; }
+  .txt span { color: var(--mut); font-size: 12px; }
+  button { padding: 8px 14px; border-radius: 9px; border: 0; background: #0a84ff; color: #fff; font: inherit; font-weight: 600; cursor: pointer; }
+  button:hover { filter: brightness(1.1); }
+  #state { margin-top: 14px; color: var(--mut); font-size: 12px; text-align: center; }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #ff9f0a; margin-right: 6px; animation: p 1.4s ease-in-out infinite; }
+  @keyframes p { 50% { opacity: .35; } }
+</style>
+</head>
+<body>
+  <h1>Island Link needs two permissions</h1>
+  <p>macOS asks you to allow it once, so Island Link can share your mouse and keyboard with your other computer.</p>
+  <div class="step"><div class="num">1</div><div class="txt"><b>Accessibility</b><span>Lets Island Link move the pointer and type for you.</span></div><button id="a">Open settings</button></div>
+  <div class="step"><div class="num">2</div><div class="txt"><b>Input Monitoring</b><span>Lets Island Link notice your mouse and keys.</span></div><button id="i">Open settings</button></div>
+  <div id="state"><span class="dot"></span>Waiting. This window closes by itself when you have allowed it.</div>
+<script>
+  document.getElementById('a').onclick = () => window.onboard.open('Privacy_Accessibility');
+  document.getElementById('i').onclick = () => window.onboard.open('Privacy_ListenEvent');
+</script>
+</body>
+</html>

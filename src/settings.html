@@ -1,0 +1,481 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Island Link - Settings</title>
+<style>
+  :root { --bg: #141416; --panel: #1c1c1f; --panel2: #232327; --line: #2f2f34; --fg: #f2f2f7; --dim: #9a9aa2; --accent: #0a84ff; --good: #30d158; --bad: #ff453a; --ease: cubic-bezier(.32, .72, 0, 1); }
+  * { box-sizing: border-box; margin: 0; }
+  html, body { height: 100%; background: var(--bg); color: var(--fg); font: 13px -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+  #app { display: flex; height: 100%; }
+  aside { width: 210px; flex: none; background: #101012; border-right: 1px solid var(--line); padding: 22px 12px 16px; display: flex; flex-direction: column; }
+  aside h1 { font-size: 16px; padding: 0 10px 18px; }
+  aside button { display: flex; align-items: center; gap: 10px; width: 100%; padding: 9px 12px; margin-bottom: 3px; border: 0; border-radius: 10px; background: transparent; color: var(--dim); font: inherit; font-size: 13.5px; cursor: pointer; text-align: left; }
+  aside button:hover { background: #1b1b1e; color: var(--fg); }
+  aside button.on { background: var(--accent); color: #fff; }
+  aside button svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+  aside .grp { color: #6f6f78; font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase; padding: 14px 12px 6px; }
+  aside .foot { margin-top: auto; padding: 10px; color: var(--dim); font-size: 11px; display: flex; align-items: center; gap: 8px; }
+  aside .foot img { width: 16px; opacity: .7; }
+  main { flex: 1; overflow-y: auto; padding: 26px 34px 40px; }
+  main h2 { font-size: 20px; margin-bottom: 4px; }
+  main .sub { color: var(--dim); margin-bottom: 20px; }
+  .group { color: var(--dim); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; margin: 22px 0 8px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; }
+  .row { display: flex; align-items: center; gap: 16px; padding: 14px 18px; }
+  .row + .row { border-top: 1px solid var(--line); }
+  .row .t { flex: 1; min-width: 0; }
+  .row .t b { display: block; font-weight: 600; font-size: 14px; }
+  .row .t span { display: block; color: var(--dim); font-size: 12px; margin-top: 2px; }
+  .row.off { opacity: .45; pointer-events: none; }
+  .seg { display: flex; gap: 3px; background: #121214; border: 1px solid var(--line); border-radius: 10px; padding: 3px; }
+  .seg button { border: 0; background: transparent; color: var(--dim); padding: 6px 14px; border-radius: 8px; font: inherit; cursor: pointer; }
+  .seg button.on { background: #2f2f36; color: var(--fg); }
+  .slider { display: flex; align-items: center; gap: 12px; width: 280px; }
+  .slider input { flex: 1; accent-color: var(--accent); }
+  .slider output { min-width: 52px; text-align: right; font-weight: 600; font-variant-numeric: tabular-nums; }
+  button.btn { background: var(--panel2); color: var(--fg); border: 1px solid var(--line); border-radius: 9px; padding: 7px 14px; font: inherit; cursor: pointer; }
+  button.btn:hover { background: #2c2c32; }
+  button.btn.primary { background: var(--accent); border-color: var(--accent); }
+  button.btn.danger { color: var(--bad); }
+  button.keychip { min-width: 128px; font-weight: 600; }
+  button.keychip.empty { color: var(--dim); }
+  button.keychip.rec { border-color: var(--accent); color: var(--accent); }
+  .hkrow { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-top: 1px solid var(--line); flex-wrap: wrap; }
+  .hkrow:first-child { border-top: 0; }
+  .hkrow .arrow { color: var(--dim); }
+  .hkrow .x { margin-left: auto; }
+  button.ico { background: transparent; border: 0; color: var(--dim); cursor: pointer; padding: 4px 8px; border-radius: 7px; font-size: 14px; }
+  button.ico:hover { background: #2a2a30; color: var(--fg); }
+  input.txt, select { background: #121214; color: var(--fg); border: 1px solid var(--line); border-radius: 9px; padding: 7px 10px; font: inherit; min-width: 0; }
+  input.txt:focus, select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  /* preview */
+  #preview { position: relative; height: 300px; border-radius: 14px; background: radial-gradient(circle at 50% 40%, #1f3a2a, #0c1410 70%); border: 1px solid var(--line); overflow: hidden; margin-bottom: 14px; }
+  #preview .c, #preview .i { position: absolute; border-radius: 50%; display: flex; align-items: center; justify-content: center; transition: all .25s var(--ease); }
+  #preview .c { background: #0b0b0e; border: 1px solid #ffffff30; }
+  #preview .c img { width: 50%; }
+  #preview .i { background: #17171bf2; border: 1px solid #ffffff30; color: #f2f2f7; box-shadow: 0 6px 18px #0008; }
+  #preview .i.sq { border-radius: 28%; }
+  #preview svg { width: 45%; height: 45%; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+  #preview .tag { position: absolute; left: 50%; bottom: 10px; transform: translateX(-50%); background: #0b0b0ef0; border: 1px solid #ffffff22; border-radius: 12px; padding: 3px 10px; font-size: 11px; font-weight: 600; }
+  /* items and workspaces */
+  .list { display: flex; flex-direction: column; }
+  .item { display: flex; align-items: center; gap: 12px; padding: 10px 14px; }
+  .item + .item { border-top: 1px solid var(--line); }
+  .item .pic { width: 32px; height: 32px; border-radius: 9px; background: #121214; border: 1px solid var(--line); display: flex; align-items: center; justify-content: center; flex: none; overflow: hidden; }
+  .item .pic img { width: 22px; height: 22px; }
+  .item .pic svg { width: 18px; height: 18px; fill: none; stroke: var(--dim); stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+  .item .nm { flex: 1; min-width: 0; }
+  .item .kind { color: var(--dim); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
+  .ws { margin-bottom: 14px; }
+  .ws .head { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-bottom: 1px solid var(--line); }
+  .ws .head input { flex: 1; font-weight: 600; font-size: 14px; }
+  .adders { display: flex; gap: 8px; padding: 12px 14px; flex-wrap: wrap; border-top: 1px solid var(--line); }
+  .inline { padding: 10px 14px; border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: 8px; }
+  .inline .hits { display: flex; flex-direction: column; max-height: 220px; overflow: auto; }
+  .hit { display: flex; align-items: center; gap: 10px; padding: 6px 8px; border-radius: 8px; cursor: pointer; }
+  .hit:hover { background: #2a2a30; }
+  .hit img { width: 22px; height: 22px; }
+  .hit .ph { width: 22px; height: 22px; border-radius: 6px; background: #2a2a30; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; }
+  .note { color: var(--dim); font-size: 12px; padding: 10px 14px; }
+  .sw { width: 42px; height: 24px; border-radius: 12px; background: #3a3a40; border: 0; position: relative; cursor: pointer; flex: none; transition: background .2s; }
+  .sw i { position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%; background: #fff; transition: left .2s var(--ease); }
+  .sw.on { background: var(--good); }
+  .sw.on i { left: 21px; }
+  select.big { min-width: 210px; }
+  .banner { background: #3a2a10; border: 1px solid #6b4a14; color: #ffcc66; border-radius: 12px; padding: 10px 14px; margin-bottom: 16px; }
+  .swatches { display: flex; flex-wrap: wrap; gap: 8px; padding: 14px 18px; }
+  .swatch { width: 34px; height: 34px; border-radius: 10px; border: 1px solid #ffffff30; cursor: pointer; padding: 0; position: relative; }
+  .swatch:hover::after { content: attr(title); position: absolute; left: 50%; top: -26px; transform: translateX(-50%); background: #000; color: #fff; padding: 2px 7px; border-radius: 7px; font-size: 11px; white-space: nowrap; }
+  .swatch.copied { outline: 2px solid var(--good); }
+  .msg { color: var(--dim); font-size: 12px; }
+  .toast { position: fixed; right: 22px; bottom: 20px; background: #111114; border: 1px solid var(--line); border-radius: 12px; padding: 9px 14px; opacity: 0; transform: translateY(8px); transition: all .25s var(--ease); pointer-events: none; }
+  .toast.show { opacity: 1; transform: none; }
+</style>
+</head>
+<body>
+<div id="app">
+  <aside>
+    <h1>Settings</h1>
+    <button data-p="general"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>General</button>
+    <div class="grp">Input</div>
+    <button data-p="pointer"><svg viewBox="0 0 24 24"><path d="M5 3l14 7-6 2-2 6z"/></svg>Pointer &amp; switching</button>
+    <button data-p="scrolling"><svg viewBox="0 0 24 24"><rect x="7" y="3" width="10" height="18" rx="5"/><path d="M12 7v4"/></svg>Scrolling</button>
+    <button data-p="buttons"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="9"/></svg>Mouse buttons</button>
+    <button data-p="shortcuts"><svg viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="12" rx="2.5"/><path d="M7 10h.01M11 10h.01M15 10h.01M8 14h8"/></svg>Keyboard shortcuts</button>
+    <div class="grp">Radial menu</div>
+    <button data-p="activation"><svg viewBox="0 0 24 24"><path d="M12 3v4M12 17v4M3 12h4M17 12h4"/><circle cx="12" cy="12" r="2.5"/></svg>Activation</button>
+    <button data-p="appearance"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="9"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2"/></svg>Appearance</button>
+    <button data-p="workspaces"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="6.5" height="6.5" rx="1.5"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="1.5"/><rect x="4" y="13.5" width="6.5" height="6.5" rx="1.5"/><rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1.5"/></svg>Wheel &amp; workspaces</button>
+    <div class="grp">Tools</div>
+    <button data-p="color"><svg viewBox="0 0 24 24"><path d="M14.5 5.5l4 4"/><path d="M16.5 3.5a2 2 0 0 1 3 3l-2 2-3-3z"/><path d="M14.5 8.5L5 18l-1 3 3-1 9.5-9.5"/></svg>Color picker</button>
+    <button data-p="sharing"><svg viewBox="0 0 24 24"><path d="M4 12v7h16v-7M12 3v12M7 8l5-5 5 5"/></svg>Sharing</button>
+    <button data-p="diagnostics"><svg viewBox="0 0 24 24"><path d="M4 18l4-6 3 3 4-8 5 11"/></svg>Diagnostics</button>
+    <div class="foot"><img src="assets/logo.png" alt="">Island Link · this computer</div>
+  </aside>
+  <main id="main"></main>
+</div>
+<div class="toast" id="toast">Saved</div>
+<script src="assets/wheel.js"></script>
+<script>
+const W = window.Wheel, $main = document.getElementById('main');
+let S = null, page = 'activation', saveTimer = null;
+const h = (tag, attrs, ...kids) => {
+  const el = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) { if (k === 'class') el.className = v; else if (k.startsWith('on')) el.addEventListener(k.slice(2), v); else if (k === 'html') el.innerHTML = v; else if (v === true) el.setAttribute(k, ''); else if (v !== false && v != null) el.setAttribute(k, v); }
+  for (const kid of kids.flat()) if (kid != null && kid !== false) el.append(kid.nodeType ? kid : document.createTextNode(kid));
+  return el;
+};
+const toast = (m) => { const t = document.getElementById('toast'); t.textContent = m; t.classList.add('show'); clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.remove('show'), 1100); };
+function save(rerender) {
+  clearTimeout(saveTimer);
+  // S.cfg stays the same object: the sliders and fields hold references into it (replacing it made later changes vanish)
+  saveTimer = setTimeout(async () => { await window.rs.save(S.cfg); toast('Saved'); if (rerender) draw(); }, 250);
+}
+const seg = (opts, value, on) => h('div', { class: 'seg' }, opts.map(([v, label]) => h('button', { class: v === value ? 'on' : '', onclick: () => on(v) }, label)));
+const row = (title, desc, control, cls) => h('div', { class: 'row ' + (cls || '') }, h('div', { class: 't' }, h('b', {}, title), desc ? h('span', {}, desc) : null), control);
+const slider = (min, max, step, value, unit, on, fmt) => {
+  const show = (v) => (fmt ? fmt(v) : v + unit);
+  const out = h('output', {}, show(value));
+  const inp = h('input', { type: 'range', min, max, step, value, oninput: () => { out.textContent = show(+inp.value); on(+inp.value); } });
+  return h('div', { class: 'slider' }, inp, out);
+};
+const iconOf = (it) => it.kind === 'app' && S.icons[it.path] ? h('img', { src: S.icons[it.path], alt: '' }) : h('span', { html: W.ICONS[it.kind] || W.ICONS.app });
+
+// ---------------------------------------------------------------- Activation
+function pageActivation() {
+  const t = S.trigger;
+  return [
+    h('h2', {}, 'Activation'), h('div', { class: 'sub' }, 'How the wheel opens. Press the trigger again, or the logo in the middle, to close it.'),
+    h('div', { class: 'group' }, 'Mouse'),
+    h('div', { class: 'card' },
+      row('Mouse trigger', 'Open the wheel with a mouse button. Side buttons are usually free; left and right stay with the system.',
+        seg([['off', 'Off'], ['middle', 'Wheel'], ['back', 'Back'], ['forward', 'Forward']], t, async (v) => { S.trigger = await window.rs.trigger(v); S.map = await window.api.btnmapGet(); toast('Saved'); draw(); }))),
+    h('div', { class: 'group' }, 'Try it'),
+    h('div', { class: 'card' }, row('Open the wheel now', 'Shows the wheel under the pointer, as it will look when you press the trigger.', h('button', { class: 'btn primary', onclick: () => window.rs.test() }, 'Open'))),
+  ];
+}
+
+// ---------------------------------------------------------------- Appearance (with a live preview)
+function drawPreview(box) {
+  const a = S.cfg.appearance, items = S.cfg.items.length ? S.cfg.items : [{ type: 'action', action: 'pickColor' }, { type: 'action', action: 'screenshot' }, { type: 'workspace' }];
+  const { pos } = W.layout(items.length, a), cx = box.clientWidth / 2, cy = box.clientHeight / 2 - 14;
+  const fit = 0.58; // one fixed scale, so a bigger radius or icon visibly grows (the biggest setting still fits)
+  box.innerHTML = '';
+  const place = (el, x, y, size) => { el.style.width = el.style.height = size + 'px'; el.style.left = (cx + x * fit - size / 2) + 'px'; el.style.top = (cy + y * fit - size / 2) + 'px'; box.append(el); };
+  place(h('div', { class: 'c' }, h('img', { src: 'assets/logo.png', alt: '' })), 0, 0, a.icon * 1.3 * fit);
+  items.forEach((it, i) => place(h('div', { class: 'i', html: W.ICONS[it.type === 'action' ? it.action : 'workspace'] || W.ICONS.none }), pos[i].x, pos[i].y, a.icon * fit));
+  box.append(h('div', { class: 'tag' }, 'Island Link · Center'));
+}
+function pageAppearance() {
+  const a = S.cfg.appearance, box = h('div', { id: 'preview' });
+  const upd = (k) => (v) => { a[k] = v; drawPreview(box); save(false); };
+  setTimeout(() => drawPreview(box), 0);
+  return [
+    h('h2', {}, 'Appearance'), h('div', { class: 'sub' }, 'Size and spacing of the wheel. The preview follows your changes.'),
+    box,
+    h('div', { class: 'card' },
+      row('Orbital radius', 'Distance from the centre to the items. It grows by itself when many items would touch.', slider(70, 200, 2, a.radius, ' px', upd('radius'))),
+      row('Icon size', 'Visual weight of each target.', slider(40, 80, 1, a.icon, ' px', upd('icon'))),
+      row('Target spacing', 'Minimum space between neighbouring items.', slider(0, 40, 1, a.spacing, ' px', upd('spacing')))),
+    h('div', { style: 'margin-top:12px' }, h('button', { class: 'btn', onclick: () => { S.cfg.appearance = { ...W.DEFAULTS }; save(true); } }, 'Reset appearance')),
+  ];
+}
+
+// ---------------------------------------------------------------- Wheel & workspaces
+const wsName = (id) => (S.cfg.workspaces.find((w) => w.id === id) || {}).name || 'Workspace';
+function pageWorkspaces() {
+  const cfg = S.cfg, L = S.limit;
+  // the items on the main ring
+  const ring = h('div', { class: 'card list' },
+    cfg.items.map((it, i) => h('div', { class: 'item' },
+      h('div', { class: 'pic', html: W.ICONS[it.type === 'action' ? it.action : 'workspace'] }),
+      h('select', { class: 'nm', onchange: (e) => { const v = e.target.value; cfg.items[i] = v.startsWith('a:') ? { type: 'action', action: v.slice(2) } : { type: 'workspace', ws: v.slice(2) }; save(true); } },
+        h('optgroup', { label: 'Quick actions' }, S.actions.map((a) => h('option', { value: 'a:' + a.id, selected: it.type === 'action' && it.action === a.id }, a.label))),
+        h('optgroup', { label: 'Workspaces' }, cfg.workspaces.map((w) => h('option', { value: 'w:' + w.id, selected: it.type === 'workspace' && it.ws === w.id }, w.name)))),
+      h('button', { class: 'ico', title: 'Move up', disabled: i === 0, onclick: () => { [cfg.items[i - 1], cfg.items[i]] = [cfg.items[i], cfg.items[i - 1]]; save(true); } }, '↑'),
+      h('button', { class: 'ico', title: 'Move down', disabled: i === cfg.items.length - 1, onclick: () => { [cfg.items[i + 1], cfg.items[i]] = [cfg.items[i], cfg.items[i + 1]]; save(true); } }, '↓'),
+      h('button', { class: 'ico', title: 'Remove', onclick: () => { cfg.items.splice(i, 1); save(true); } }, '✕'))),
+    cfg.items.length ? null : h('div', { class: 'note' }, 'The wheel is empty.'),
+    h('div', { class: 'adders' },
+      h('button', { class: 'btn', disabled: cfg.items.length >= L.items, onclick: () => { cfg.items.push({ type: 'action', action: S.actions[0].id }); save(true); } }, '+ Quick action'),
+      h('button', { class: 'btn', disabled: cfg.items.length >= L.items || !cfg.workspaces.length, onclick: () => { cfg.items.push({ type: 'workspace', ws: cfg.workspaces[0].id }); save(true); } }, '+ Workspace')));
+
+  const cards = cfg.workspaces.map((w) => workspaceCard(w));
+  return [
+    h('h2', {}, 'Wheel & workspaces'), h('div', { class: 'sub' }, 'Choose what sits on the wheel. A workspace is a group of apps, links and folders that opens as its own ring.'),
+    h('div', { class: 'group' }, `Wheel (${cfg.items.length} of ${L.items})`), ring,
+    h('div', { class: 'group' }, `Workspaces (${cfg.workspaces.length} of ${L.workspaces})`), cards,
+    h('button', { class: 'btn primary', disabled: cfg.workspaces.length >= L.workspaces, onclick: () => { cfg.workspaces.push({ id: 'w' + Math.random().toString(36).slice(2, 8), name: 'New workspace', items: [] }); save(true); } }, '+ New workspace'),
+  ];
+}
+
+function workspaceCard(w) {
+  const cfg = S.cfg, L = S.limit;
+  const card = h('div', { class: 'card ws' });
+  const slot = h('div'); // where the inline "add" form appears
+  const add = (item) => { if (w.items.length >= L.shortcuts) return toast('A workspace holds up to ' + L.shortcuts); w.items.push(item); save(true); };
+  card.append(
+    h('div', { class: 'head' },
+      h('div', { class: 'pic', html: W.ICONS.workspace, style: 'width:30px;height:30px;display:flex;align-items:center;justify-content:center' }),
+      h('input', { class: 'txt', value: w.name, maxlength: 30, oninput: (e) => { w.name = e.target.value; save(false); } }),
+      h('span', { class: 'kind' }, `${w.items.length} / ${L.shortcuts}`),
+      h('button', { class: 'btn danger', onclick: () => { if (!confirm('Delete the workspace "' + w.name + '"?')) return; cfg.workspaces = cfg.workspaces.filter((x) => x !== w); cfg.items = cfg.items.filter((it) => !(it.type === 'workspace' && it.ws === w.id)); save(true); } }, 'Delete')),
+    h('div', { class: 'list' }, w.items.map((it, i) => h('div', { class: 'item' },
+      h('div', { class: 'pic' }, iconOf(it)),
+      h('input', { class: 'txt nm', value: it.name, maxlength: 60, oninput: (e) => { it.name = e.target.value; save(false); } }),
+      h('span', { class: 'kind' }, it.kind === 'app' ? 'App' : it.kind === 'url' ? 'Link' : 'Folder'),
+      h('button', { class: 'ico', title: 'Move up', disabled: i === 0, onclick: () => { [w.items[i - 1], w.items[i]] = [w.items[i], w.items[i - 1]]; save(true); } }, '↑'),
+      h('button', { class: 'ico', title: 'Move down', disabled: i === w.items.length - 1, onclick: () => { [w.items[i + 1], w.items[i]] = [w.items[i], w.items[i + 1]]; save(true); } }, '↓'),
+      h('button', { class: 'ico', title: 'Remove', onclick: () => { w.items.splice(i, 1); save(true); } }, '✕')))),
+    w.items.length ? null : h('div', { class: 'note' }, 'No shortcuts yet.'),
+    slot,
+    h('div', { class: 'adders' },
+      h('button', { class: 'btn', onclick: () => appForm(slot, add) }, '+ Application'),
+      h('button', { class: 'btn', onclick: () => linkForm(slot, add) }, '+ Link'),
+      h('button', { class: 'btn', onclick: async () => { const f = await window.rs.folder(); if (f) add({ kind: 'folder', path: f.path, name: f.name }); } }, '+ Folder')));
+  return card;
+}
+
+// type a name, click the app: no file dialog and no paths
+function appForm(slot, add) {
+  const hits = h('div', { class: 'hits' }), q = h('input', { class: 'txt', placeholder: 'Search installed apps (WhatsApp, Figma, Finder...)' });
+  let timer = null;
+  const run = async () => {
+    const list = await window.rs.search(q.value);
+    hits.innerHTML = '';
+    for (const a of list) {
+      S.icons[a.path] = a.icon;
+      hits.append(h('div', { class: 'hit', onclick: () => add({ kind: 'app', path: a.path, name: a.name, logo: a.logo || '' }) }, a.icon ? h('img', { src: a.icon, alt: '' }) : h('div', { class: 'ph' }, a.name.slice(0, 1).toUpperCase()), a.name));
+    }
+    if (!list.length) hits.append(h('div', { class: 'note' }, 'No app found.'));
+  };
+  q.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(run, 150); });
+  slot.innerHTML = ''; slot.append(h('div', { class: 'inline' }, q, hits));
+  q.focus(); run();
+}
+function linkForm(slot, add) {
+  const name = h('input', { class: 'txt', placeholder: 'Name (YouTube)' }), url = h('input', { class: 'txt', placeholder: 'https://www.youtube.com' });
+  const go = () => {
+    let u = url.value.trim();
+    if (!/^(https?:\/\/|mailto:)/i.test(u)) u = 'https://' + u;
+    if (!/^(https?:\/\/[^\s.]+\.[^\s]+|mailto:\S+)/i.test(u)) return toast('That does not look like a link');
+    add({ kind: 'url', url: u, name: name.value.trim() });
+  };
+  url.addEventListener('keydown', (e) => e.key === 'Enter' && go());
+  slot.innerHTML = ''; slot.append(h('div', { class: 'inline' }, h('div', { style: 'display:flex;gap:8px' }, name, url), h('div', {}, h('button', { class: 'btn primary', onclick: go }, 'Add link'))));
+  name.focus();
+}
+
+// ---------------------------------------------------------------- general settings (the same API the island uses)
+const A = window.api, MACOS = A.platform === 'darwin';
+const toggle = (on, cb) => { const el = h('button', { class: 'sw' + (on ? ' on' : ''), role: 'switch', onclick: () => { on = !on; el.classList.toggle('on', on); cb(on); } }, h('i')); return el; };
+const savePrefs = () => A.prefsSet(S.prefs.edgeResistance, S.prefs.freelookGuard, S.prefs.smoothWheel);
+const saveScroll = () => A.scrollSet(S.scroll.speed, S.scroll.reverse);
+const SHORTCUT = MACOS ? 'Cmd+Option+P' : 'Ctrl+Alt+P';
+const ACTION_OPTIONS = [['default', 'Default'], ['desktopLeft', 'Previous desktop'], ['desktopRight', 'Next desktop'], ['missionControl', MACOS ? 'Mission Control' : 'Task View'], ['back', 'Back'], ['forward', 'Forward'], ['pickColor', 'Pick a color'], ['screenshot', 'Screenshot'], ['radial', 'Radial menu'], ['none', 'Do nothing']];
+const triggerOf = (m) => (m.middle === 'radial' ? 'middle' : m.forward === 'radial' ? 'forward' : m.back === 'radial' ? 'back' : 'off');
+
+function pagePointer() {
+  const P = S.prefs;
+  return [
+    h('h2', {}, 'Pointer & switching'), h('div', { class: 'sub' }, 'How the pointer moves between your computers.'),
+    h('div', { class: 'card' },
+      row('Edge resistance', 'How hard you push against the screen edge before the pointer crosses to the other computer.',
+        slider(0, 100, 5, P.edgeResistance, '', (v) => { P.edgeResistance = v; savePrefs(); }, (v) => (v === 0 ? 'off' : String(v)))),
+      row('Game guard', "Don't switch while a game holds the mouse.", toggle(P.freelookGuard, (v) => { P.freelookGuard = v; savePrefs(); }))),
+    h('div', { class: 'group' }, 'Look to switch'),
+    h('div', { class: 'card' },
+      row('Calibration', h('span', { id: 'g-msg' }), h('div', { style: 'display:flex;gap:8px' }, h('button', { class: 'btn', id: 'g-cal', onclick: () => A.gazeCalibrate() }, 'Calibrate'), h('button', { class: 'btn', id: 'g-prev', onclick: () => A.gazePreview(!S.gaze.preview) }, 'Preview'))),
+      row('Look to switch', 'Turn your head toward the other screen to move there. The camera is processed on this computer only.', toggle(S.gaze.enabled, (v) => A.gazeSet(v)))),
+    h('div', { class: 'group' }, 'Screens'),
+    h('div', { class: 'card' }, row('Arrange screens', 'Place the screens of both computers next to each other, to scale.', h('button', { class: 'btn', onclick: () => A.openArrange() }, 'Open'))),
+  ];
+}
+// the status line and buttons of Look to switch follow the camera state without redrawing the page
+function updateGaze() {
+  const g = S.gaze, msg = document.getElementById('g-msg');
+  if (!msg) return;
+  msg.textContent = g.error ? 'Camera error: ' + g.error
+    : g.msg && (g.calibrating || !g.calibrated || g.msg !== 'Calibrated') ? g.msg
+    : !g.enabled ? 'Off'
+    : !g.linked ? 'Waiting for a linked computer'
+    : !g.camera ? 'Starting camera...'
+    : g.calibrated ? 'Ready - turn your head to the other screen' : 'Calibrate to start';
+  const cal = document.getElementById('g-cal'), prev = document.getElementById('g-prev');
+  cal.disabled = !g.enabled || !g.camera || g.calibrating; cal.textContent = g.calibrated ? 'Recalibrate' : 'Calibrate';
+  prev.disabled = !g.enabled || !g.camera; prev.textContent = g.preview ? 'Hide preview' : 'Preview';
+}
+
+function pageScrolling() {
+  const P = S.prefs, SC = S.scroll, T = S.tune;
+  return [
+    h('h2', {}, 'Scrolling'), h('div', { class: 'sub' }, 'Settings for the mouse wheel on this computer.'),
+    h('div', { class: 'card' },
+      row('Smooth mouse wheel', MACOS ? 'On: the wheel keeps the Mac glide and the settings below change how far it goes. Off: untouched.' : 'Wheel notches glide instead of jumping (this computer and the other).', toggle(P.smoothWheel, (v) => { P.smoothWheel = v; savePrefs(); })),
+      row('Scroll speed', 'Multiplies every wheel scroll on this computer (this mouse and the one on the other computer). Needs Smooth mouse wheel on for the own mouse.', slider(20, 400, 10, Math.round(SC.speed * 100), '%', (v) => { SC.speed = v / 100; saveScroll(); })),
+      row('Reverse direction', 'Flips the wheel direction (natural scrolling). Needs Smooth mouse wheel on for the own mouse.', toggle(SC.reverse, (v) => { SC.reverse = v; saveScroll(); }))),
+    h('div', { class: 'group' }, 'Scroll tuning (this device only)'),
+    h('div', { class: 'card' },
+      row('Step', 'Pixels one wheel notch scrolls.', slider(20, 300, 5, T.step, ' px', (v) => { T.step = v; A.tuneSet(T); })),
+      row('Speed', 'Notches that follow each other quickly scroll further.', slider(1, 4, 0.1, T.speed, 'x', (v) => { T.speed = v; A.tuneSet(T); }, (v) => v.toFixed(1) + 'x')),
+      row('Duration', MACOS ? 'Not used on the Mac: the system glides the wheel by itself.' : 'How long the glide takes to settle.', slider(100, 1200, 25, T.duration, ' ms', (v) => { T.duration = v; A.tuneSet(T); }), MACOS ? 'off' : '')),
+    h('div', { style: 'margin-top:12px' }, h('button', { class: 'btn', onclick: async () => { S.tune = await A.tuneSet({ step: 90, speed: 1.5, duration: 350 }); draw(); } }, 'Reset tuning')),
+  ];
+}
+
+// ---- key combinations: shown nicely, and recorded from this computer's keyboard
+const isKeys = (v) => String(v || '').startsWith('keys:');
+const KEYNAME = { Ctrl: MACOS ? 'Control' : 'Ctrl', Alt: MACOS ? 'Option' : 'Alt', Meta: MACOS ? 'Cmd' : 'Win', Shift: 'Shift', ArrowLeft: '←', ArrowRight: '→', ArrowUp: '↑', ArrowDown: '↓', Escape: 'Esc', BracketLeft: '[', BracketRight: ']', Minus: '-', Equal: '=', Comma: ',', Period: '.', Slash: '/', Backslash: '\\', Semicolon: ';', Quote: "'", Backquote: '`' };
+const niceCombo = (c) => String(c || '').split('+').map((n) => KEYNAME[n] || n).join(' + ');
+// one button that records the next key combination typed on this computer (Esc cancels; plain letters are not accepted)
+function recorder(current, onDone, empty) {
+  const label = () => (current ? niceCombo(current) : (empty || 'Record'));
+  const b = h('button', { class: 'btn keychip' + (current ? '' : ' empty') }, label());
+  b.onclick = async () => {
+    b.textContent = 'Press the keys...'; b.classList.add('rec');
+    A.log('settings: record a key combination');
+    const c = await A.keysRecord();
+    b.classList.remove('rec');
+    if (c) onDone(c); else b.textContent = label();
+  };
+  return b;
+}
+
+function pageButtons() {
+  const defs = [['tiltLeft', 'Thumb wheel left'], ['tiltRight', 'Thumb wheel right'], ['back', 'Back button'], ['forward', 'Forward button'], ['chord', 'Back + Forward together'], ['middle', 'Wheel press (middle button)']];
+  const save = async () => { S.map = await A.btnmapSet(S.map); S.trigger = triggerOf(S.map); toast('Saved'); };
+  S.pend = S.pend || {};
+  const control = (k) => {
+    const v = S.map[k] || 'default', keys = isKeys(v), showKeys = keys || !!S.pend[k];
+    const sel = h('select', { class: 'big', onchange: async (e) => {
+      const val = e.target.value;
+      if (val === 'keys') { S.pend[k] = true; draw(); return; }
+      delete S.pend[k]; S.map[k] = val; await save(); draw();
+    } }, [...ACTION_OPTIONS.map(([val, l]) => h('option', { value: val, selected: !showKeys && v === val }, l)), h('option', { value: 'keys', selected: showKeys }, 'Keyboard shortcut...')]);
+    return h('div', { style: 'display:flex;gap:8px;align-items:center' }, showKeys ? recorder(keys ? v.slice(5) : '', async (c) => { S.map[k] = 'keys:' + c; delete S.pend[k]; await save(); draw(); }, 'Record keys') : null, sel);
+  };
+  return [
+    h('h2', {}, 'Mouse buttons'), h('div', { class: 'sub' }, 'What your mouse buttons do on this computer, with its own mouse or with the other computer\'s mouse. A button can also press a keyboard shortcut for you: choose "Keyboard shortcut..." and type the keys.'),
+    h('div', { class: 'card' }, defs.map(([k, label]) => row(label, k === 'chord' ? 'Default: take a screenshot.' : null, control(k)))),
+  ];
+}
+
+function pageShortcuts() {
+  const rows = S.hkRows;
+  const save = async () => { S.hotkeys = await A.hotkeysSet(rows); toast('Saved'); };
+  const actOpts = ACTION_OPTIONS.filter(([v]) => v !== 'default' && v !== 'none');
+  const rowEl = (r, i) => {
+    const keysOut = isKeys(r.action);
+    const sel = h('select', { class: 'big', onchange: async (e) => {
+      r.action = e.target.value === 'keys' ? 'keys:' : e.target.value; await save(); draw();
+    } }, [...actOpts.map(([v, l]) => h('option', { value: v, selected: !keysOut && r.action === v }, l)), h('option', { value: 'keys', selected: keysOut }, 'Press other keys...')]);
+    return h('div', { class: 'hkrow' },
+      recorder(r.combo, async (c) => { r.combo = c; await save(); draw(); }, 'Record keys'),
+      h('span', { class: 'arrow' }, '→'),
+      sel,
+      keysOut ? recorder(r.action.slice(5), async (c) => { r.action = 'keys:' + c; await save(); draw(); }, 'Record keys') : null,
+      h('button', { class: 'btn danger x', title: 'Remove', onclick: async () => { rows.splice(i, 1); await save(); draw(); } }, 'Remove'));
+  };
+  return [
+    h('h2', {}, 'Keyboard shortcuts'),
+    h('div', { class: 'sub' }, 'Press a key combination to run an action: the radial menu, a screenshot, switch desktop, or another combination. It works when you type on this computer and when the other computer\'s keyboard is controlling it. Each computer keeps its own list. The mouse buttons can run the same actions (Mouse buttons page).'),
+    h('div', { class: 'card' },
+      rows.length ? rows.map(rowEl) : h('div', { class: 'note' }, 'No shortcuts yet.'),
+      h('div', { class: 'adders' }, rows.length >= 12 ? h('span', { class: 'note' }, 'Up to 12 shortcuts.') : h('button', { class: 'btn primary', onclick: () => { rows.push({ combo: '', action: 'radial' }); draw(); } }, 'Add a shortcut'))),
+    h('div', { class: 'note' }, 'Tip: pick combinations other apps do not use, for example Ctrl + Alt + Shift + R: the keys also reach the app in front. A shortcut needs at least one modifier key (Ctrl, Alt, Shift or ' + (MACOS ? 'Cmd' : 'Win') + ') unless it is an F key. While you record, Esc cancels.'),
+  ];
+}
+
+function pageColor() {
+  const list = S.colors;
+  return [
+    h('h2', {}, 'Color picker'), h('div', { class: 'sub' }, `Point at any color on the screen: a magnifier follows the pointer and a click copies #RRGGBB. Shortcut: ${SHORTCUT}.`),
+    h('div', { class: 'card' }, row('Pick a color', 'The screen keeps running while you pick. Esc or a right click cancels.', h('button', { class: 'btn primary', onclick: () => A.colorPick() }, 'Pick'))),
+    h('div', { class: 'group' }, 'Recent colors'),
+    h('div', { class: 'card' },
+      list.length ? h('div', { class: 'swatches' }, list.map((c) => h('button', { class: 'swatch', style: 'background:' + c, title: c + ' (click to copy)', onclick: (e) => { A.colorCopy(c); e.currentTarget.classList.add('copied'); setTimeout(() => e.currentTarget.classList.remove('copied'), 700); } }))) : h('div', { class: 'note' }, 'No colors picked yet.'),
+      list.length ? h('div', { class: 'adders' }, h('button', { class: 'btn danger', onclick: () => A.colorsClear() }, 'Clear colors')) : null),
+  ];
+}
+
+function pageSharing() {
+  const T = S.shot;
+  return [
+    h('h2', {}, 'Sharing'), h('div', { class: 'sub' }, 'What travels between your computers.'),
+    h('div', { class: 'card' }, row('Share clipboard', 'Text and screenshots you copy here appear on the other computer.', toggle(S.clip, (v) => { S.clip = v; A.clipSet(v); }))),
+    h('div', { class: 'group' }, 'Screenshots'),
+    h('div', { class: 'card' },
+      row('Save screenshots in a folder', 'Every screenshot taken with Island Link (the screenshot button or shortcut) or with the system shortcut is saved here as a PNG, as soon as it is taken.',
+        toggle(T.on, async (v) => { S.shot = await A.shotSet({ on: v }); toast('Saved'); draw(); })),
+      row('Folder', T.dir || 'No folder chosen yet.',
+        h('div', { style: 'display:flex;gap:8px' }, h('button', { class: 'btn', onclick: async () => { S.shot = await A.shotChoose(); draw(); } }, 'Choose...'), h('button', { class: 'btn', onclick: () => A.shotOpen() }, 'Open'))),
+      row('Also those taken on the other computer', 'A screenshot taken on the other computer is saved here too, since it arrives through the shared clipboard (needs Share clipboard on).',
+        toggle(T.other, async (v) => { S.shot = await A.shotSet({ other: v }); toast('Saved'); })),
+      row('File format', 'JPG files are much smaller; PNG keeps every detail.',
+        h('select', { class: 'big', onchange: async (e) => { S.shot = await A.shotSet({ format: e.target.value }); toast('Saved'); } }, [['png', 'PNG'], ['jpg', 'JPG']].map(([v, l]) => h('option', { value: v, selected: T.format === v }, l)))),
+      row('Ask me when the folder reaches', 'In use: ' + T.sizeMb + ' MB of ' + T.limitMb + ' MB (' + Math.min(100, Math.round(T.sizeMb / T.limitMb * 100)) + '%). The first number is what the folder holds today (all PNG and JPG files in it); it changes only when pictures are added or removed, not when you change the limit. At the limit you choose: delete the oldest pictures (they go to the Trash) or keep everything.',
+        h('div', { style: 'display:flex;gap:8px;align-items:center' }, h('input', { class: 'txt', type: 'number', min: 1, step: 10, value: T.limitMb, style: 'width:96px', onchange: async (e) => { const n = Number(e.target.value); if (!(n >= 1)) { toast('Enter 1 MB or more'); draw(); return; } S.shot = await A.shotSet({ limitMb: n }); toast('Saved'); draw(); } }), h('span', { class: 'note', style: 'padding:0' }, 'MB'))),
+      T.mac ? row('Mac: copy screenshots at once', 'macOS only writes a file for Cmd+Shift+3/4/5, up to five seconds late, and never uses the clipboard. With this on, the screenshot is on the clipboard immediately (paste it at once) and Island Link saves the file. The old macOS setting comes back when Island Link quits.',
+        toggle(T.macClip, async (v) => { S.shot = await A.shotSet({ macClip: v }); toast('Saved'); })) : null),
+    h('div', { class: 'note' }, 'Each computer has its own folder. Screenshots go to the clipboard first (that is how they reach the other computer); on a Mac only the shortcuts that copy to the clipboard are seen (Cmd+Ctrl+Shift+3/4/5), or the screenshot button of Island Link.'),
+  ];
+}
+
+function pageGeneral() {
+  const G = S.startup;
+  return [
+    h('h2', {}, 'General'), h('div', { class: 'sub' }, 'Island Link ' + G.version),
+    h('div', { class: 'card' },
+      row('Start with this computer', G.packaged ? 'Island Link starts by itself when you sign in, so it is ready when the computer is.' : 'Available in the installed app. A development run never registers itself.',
+        toggle(G.openAtLogin, async (v) => { S.startup = await A.startupSet({ openAtLogin: v }); toast('Saved'); }), G.packaged ? '' : 'off'),
+      row('Start-up animation', 'The logo appears and flies into the pill when the app starts.', toggle(G.splash, async (v) => { S.startup = await A.startupSet({ splash: v }); toast('Saved'); })),
+      row('Animation colors', 'Used by the start-up animation and the screen-edge effect: the glow, and the rings and edge line. Pick a color, then Preview.',
+        h('div', { style: 'display:flex;gap:10px;align-items:center' },
+          h('input', { type: 'color', title: 'Glow', value: (G.splashColors && G.splashColors.c1) || '#4aa3ff', onchange: async (e) => { S.startup = await A.startupSet({ splashColors: { c1: e.target.value, c2: (S.startup.splashColors && S.startup.splashColors.c2) || '' } }); toast('Saved'); } }),
+          h('input', { type: 'color', title: 'Rings', value: (G.splashColors && G.splashColors.c2) || '#ffffff', onchange: async (e) => { S.startup = await A.startupSet({ splashColors: { c1: (S.startup.splashColors && S.startup.splashColors.c1) || '', c2: e.target.value } }); toast('Saved'); } }),
+          h('button', { class: 'btn', onclick: () => A.splashTest() }, 'Preview'),
+          h('button', { class: 'btn', onclick: async () => { S.startup = await A.startupSet({ splashColors: { c1: '', c2: '' } }); toast('Back to the default colors'); draw(); } }, 'Reset'))),
+      row('Screen-edge effect', 'A flash, a glow and rings on the edge of the one screen that becomes active when the pointer (or your head) moves control to this computer.',
+        h('div', { style: 'display:flex;gap:10px;align-items:center' }, h('button', { class: 'btn', onclick: () => A.fxTest() }, 'Preview'), toggle(G.edgeFx !== false, async (v) => { S.startup = await A.startupSet({ edgeFx: v }); toast('Saved'); }))),
+      row('About', 'Island Link ' + (G.version || '') + '. Proprietary software. It includes open-source parts: Electron, ws, koffi, uiohook-napi, nut-js and MediaPipe (Apache-2.0). The full list is in THIRD-PARTY-NOTICES.md next to the app.', h('span', {}, ''))),
+    h('div', { class: 'note' }, 'While two computers are linked, these settings follow each other: animation colors, start-up animation, screen-edge effect, edge resistance, game guard, Look to switch on/off, share clipboard and the screenshot options (on/off, format, size limit). These stay per computer: folders, mouse buttons, keyboard shortcuts, scroll feel, the wheel menu and the camera calibration.'),
+  ];
+}
+
+function pageDiagnostics() {
+  const msg = h('span', { class: 'msg' });
+  return [
+    h('h2', {}, 'Diagnostics'), h('div', { class: 'sub' }, 'A report of connection quality, pointer accuracy and recent events. Paste it when something does not work.'),
+    h('div', { class: 'card' },
+      row('Copy diagnostics', msg, h('button', { class: 'btn primary', onclick: async () => { const text = await A.diagReport(); try { await navigator.clipboard.writeText(text); msg.textContent = 'Copied to the clipboard'; } catch { msg.textContent = 'Could not copy'; } setTimeout(() => (msg.textContent = ''), 2500); } }, 'Copy')),
+      row('Copy run log', 'Everything that happened (start-up, clicks, settings, connections, crossings, files, errors): the last 400 lines.', h('button', { class: 'btn', onclick: async () => { const text = await A.runlogTail(); try { await navigator.clipboard.writeText(text); msg.textContent = 'Run log copied (' + text.split(String.fromCharCode(10)).length + ' lines)'; } catch { msg.textContent = 'Could not copy'; } setTimeout(() => (msg.textContent = ''), 2500); } }, 'Copy')),
+      row('Log folder', 'Settings, the diagnostics summary and the run log (island-run.log).', h('button', { class: 'btn', onclick: () => A.runlogOpen() }, 'Open'))),
+  ];
+}
+
+// ---------------------------------------------------------------- shell
+const PAGES = { general: pageGeneral, pointer: pagePointer, scrolling: pageScrolling, buttons: pageButtons, shortcuts: pageShortcuts, activation: pageActivation, appearance: pageAppearance, workspaces: pageWorkspaces, color: pageColor, sharing: pageSharing, diagnostics: pageDiagnostics };
+function draw() {
+  document.querySelectorAll('aside button').forEach((b) => b.classList.toggle('on', b.dataset.p === page));
+  const y = $main.scrollTop;
+  $main.innerHTML = '';
+  if (S.perm === false) $main.append(h('div', { class: 'banner' }, 'Allow Accessibility and Input Monitoring for this app in System Settings, then it starts working automatically.'));
+  $main.append(...(PAGES[page] || pagePointer)().flat()); // some pages return nested lists (e.g. one card per workspace)
+  $main.scrollTop = y;
+  updateGaze();
+}
+document.querySelectorAll('aside button').forEach((b) => b.addEventListener('click', () => { page = b.dataset.p; A.log('settings page -> ' + page); $main.scrollTop = 0; draw(); }));
+A.onGaze((g) => { if (!S) return; S.gaze = g; updateGaze(); });
+A.onColors((l) => { if (!S) return; S.colors = l; if (page === 'color') draw(); });
+A.onPerm((ok) => { if (!S) return; S.perm = ok; draw(); });
+Promise.all([window.rs.load(), A.startupGet(), A.prefsGet(), A.scrollGet(), A.tuneGet(), A.btnmapGet(), A.hotkeysGet(), A.clipGet(), A.shotGet(), A.gazeGet(), A.colorsGet(), A.permGet()]).then(([rs, startup, prefs, scroll, tune, map, hotkeys, clip, shot, gaze, colors, perm]) => {
+  S = { ...rs, startup, prefs, scroll, tune, map, hotkeys, hkRows: hotkeys.map((x) => ({ ...x })), clip, shot, gaze, colors, perm };
+  const want = new URLSearchParams(location.search).get('p');
+  if (want && PAGES[want]) page = want; else page = 'general';
+  A.log('settings window opened on ' + page);
+  draw();
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,124 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="island" class="compact">
+  <div id="shell"></div>
+  <div id="toast" class="ok"><span id="toast-icon"></span><div><b id="toast-title"></b><div id="toast-text"></div></div><span id="toast-glyph" hidden></span></div>
+  <div id="pill">
+    <span id="pill-left"><span id="pill-dot"></span><span id="pill-text">--:--</span></span>
+    <span id="pill-gap"></span>
+    <span id="pill-right"><span id="pill-link"></span><span id="pill-cam" hidden title="Camera is on (Look to switch)"></span></span>
+  </div>
+  <div id="panel">
+    <div id="cam-banner" hidden>&#9679; Camera is on (Look to switch)</div>
+      <div id="perm" hidden>Allow Accessibility &amp; Input Monitoring for this app in System Settings, then it starts automatically.</div>
+    <nav>
+      <button data-tab="media" class="on" id="home" title="Home" aria-label="Home"><img src="../assets/logo.png" alt=""></button>
+      <span class="mid">
+        <button data-tab="tray">Tray</button>
+        <button data-tab="link">Link</button>
+      </span>
+      <button id="gear" title="Settings" aria-label="Settings"><svg viewBox="0 0 24 24"><path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg></button>
+    </nav>
+
+    <section id="tab-media">
+      <div class="nook">
+        <div class="np">
+          <div id="np-art"><img id="np-img" alt="" hidden><span id="np-note">&#9835;</span></div>
+          <div class="np-info">
+            <div id="np-title">Nothing playing</div>
+            <div id="np-artist"></div>
+            <div class="controls">
+              <button id="prev">&#9198;</button>
+              <button id="play">&#9654;</button>
+              <button id="next">&#9197;</button>
+            </div>
+          </div>
+        </div>
+        <div class="cal">
+          <div class="cal-top"><b id="cal-month"></b><span id="cal-year"></span></div>
+          <div id="cal-week"></div>
+          <div id="cal-empty">Nothing for today</div>
+        </div>
+        <div class="roundcol">
+          <div class="rounds"><button id="nook-cal" class="round"><svg id="nook-cal-ico" viewBox="0 0 24 24"><circle cx="12" cy="9" r="4"/><path d="M5 20c1-4 4-6 7-6s6 2 7 6"/><path d="M3 9h2M19 9h2M12 2v2"/></svg><svg id="nook-cal-link" viewBox="0 0 24 24" hidden><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></svg><span id="nook-cal-text">Calibrate</span></button><button id="nook-pick" class="round"><svg viewBox="0 0 24 24"><path d="M14 4l6 6-9 9H5v-6z"/><path d="M12 6l6 6"/><path d="M4 20l2-2"/></svg><span>Pick color</span></button></div>
+          <div id="nook-gaze" class="mini-row" hidden><span>Look to switch</span><button id="nook-gaze-sw" class="mswitch" role="switch" aria-label="Look to switch"><i></i></button></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="tab-tray" hidden>
+      <div class="drops">
+        <div id="drop" class="zone"><svg viewBox="0 0 24 24"><path d="M3 13l3-8h12l3 8v6H3z"/><path d="M3 13h5l1 2h6l1-2h5"/></svg><span>Files Tray</span></div>
+        <div id="send" class="zone send off"><svg viewBox="0 0 24 24"><path d="M4 12l16-8-6 16-3-7z"/></svg><span id="send-label">Send to other PC</span></div>
+      </div>
+      <div id="files-head" hidden><span id="files-count"></span><button id="clear">Clear tray</button></div>
+      <div id="files"></div>
+      <div id="xfer"></div>
+    </section>
+
+    <section id="tab-link" hidden>
+      <!-- connected: one card for the other computer -->
+      <div id="peer-card" class="card" hidden>
+        <div class="card-icon" id="peer-icon"></div>
+        <div class="card-body"><b id="peer-name"></b><span id="peer-sub"></span></div>
+        <span id="peer-state" class="chip"></span>
+      </div>
+      <div id="peer-side-row" hidden>
+        <div class="seg-label">The other computer is</div>
+        <div class="seg" id="peer-side">
+          <button data-side="left">&larr; Left</button>
+          <button data-side="right">Right &rarr;</button>
+          <button data-side="top">&uarr; Above</button>
+          <button data-side="bottom">&darr; Below</button>
+        </div>
+      </div>
+      <div class="btns" id="peer-actions" hidden>
+        <button id="arrange">Arrange screens</button>
+        <button id="disconnect">Disconnect</button>
+      </div>
+
+      <!-- this computer: name, address and the pairing code -->
+      <div class="card me">
+        <div class="card-body">
+          <small>This computer</small>
+          <b id="me-name"></b>
+          <span id="addr"></span>
+        </div>
+        <div class="code" id="pin-box" title="Click to copy"><small>Pairing code</small><b id="pin"></b></div>
+      </div>
+
+      <div id="link-pair">
+        <div class="sec" id="pair-title">Connect to a computer</div>
+        <div class="sec-sub" id="nearby-title">Nearby</div>
+        <div id="nearby"></div>
+        <div id="nearby-empty">Looking for computers running Island Link on this network...</div>
+        <div class="sec-sub" id="recent-title" hidden>Recent</div>
+        <div id="recent"></div>
+        <details id="manual">
+          <summary>Enter an address</summary>
+          <div class="row"><input id="host" placeholder="IP address, e.g. 192.168.1.20" inputmode="decimal" autocomplete="off"></div>
+        </details>
+        <div class="row" id="code-row">
+          <input id="code" placeholder="Their 6-digit code" maxlength="7" inputmode="numeric" autocomplete="off">
+          <button id="connect">Connect</button>
+        </div>
+        <div class="seg-label">The other computer is</div>
+        <div class="seg" id="side">
+          <button data-side="left">&larr; Left</button>
+          <button data-side="right" class="on">Right &rarr;</button>
+          <button data-side="top">&uarr; Above</button>
+          <button data-side="bottom">&darr; Below</button>
+        </div>
+      </div>
+      <div id="link-msg"></div>
+    </section>
+  </div>
+</div>
+<script src="app.js"></script>
+</body>
+</html>

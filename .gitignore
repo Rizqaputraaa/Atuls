@@ -1,0 +1,7 @@
+node_modules/
+dist/
+Referensi/
+*.log
+.DS_Store
+docs/GEMINI-AUDIT-LENGKAP.md
+scratch-*.js

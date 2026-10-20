@@ -1,0 +1,43 @@
+<!doctype html>
+<meta charset="utf-8">
+<style>
+  :root { --ease: cubic-bezier(.22, .9, .25, 1); --c1: 74, 163, 255; --c2: 255, 255, 255; }
+  * { margin: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: transparent; }
+  #stage { position: absolute; left: 50%; top: var(--cy, 200px); width: 0; height: 0; }
+  /* soft light behind the logo */
+  #glow { position: absolute; left: -130px; top: -130px; width: 260px; height: 260px; border-radius: 50%; background: radial-gradient(circle, rgba(var(--c1), .33) 0%, rgba(var(--c1), .09) 45%, transparent 70%); opacity: 0; animation: glow 2.3s ease-out forwards; }
+  /* thin ring that spreads out once */
+  .ring { position: absolute; left: -60px; top: -60px; width: 120px; height: 120px; border-radius: 50%; border: 2px solid rgba(var(--c2), .69); opacity: 0; animation: ring 1.3s .15s ease-out forwards; }
+  .ring.two { animation-delay: .4s; border-color: rgba(var(--c1), .63); }
+  /* the logo: pops in, breathes, then flies up into the pill */
+  #logo { position: absolute; left: -62px; top: -58px; width: 124px; opacity: 0; transform-origin: 50% 50%; animation: logo 2.5s var(--ease) forwards; filter: drop-shadow(0 6px 22px rgba(var(--c1), .4)); }
+  /* a light sweep across the logo */
+  #sweep { position: absolute; left: -62px; top: -58px; width: 124px; height: 114px; -webkit-mask: url(assets/logo.png) center / contain no-repeat; mask: url(assets/logo.png) center / contain no-repeat; background: linear-gradient(105deg, transparent 35%, #ffffffd0 50%, transparent 65%) -160px 0 / 160px 100% no-repeat; opacity: 0; animation: sweep 1s .55s ease-in-out forwards, fade 2.5s forwards; }
+  @keyframes logo {
+    0% { opacity: 0; transform: translateY(14px) scale(.55); filter: blur(10px) drop-shadow(0 6px 22px rgba(var(--c1), .4)); }
+    22% { opacity: 1; transform: translateY(0) scale(1.08); filter: blur(0) drop-shadow(0 6px 22px rgba(var(--c1), .4)); }
+    32% { transform: scale(1); }
+    62% { opacity: 1; transform: translateY(0) scale(1); }
+    100% { opacity: 0; transform: translateY(var(--fly, -180px)) scale(.16); }
+  }
+  @keyframes ring { 0% { opacity: .9; transform: scale(.6); } 100% { opacity: 0; transform: scale(2.6); } }
+  @keyframes glow { 0% { opacity: 0; transform: scale(.6); } 25% { opacity: 1; transform: scale(1); } 62% { opacity: .8; } 100% { opacity: 0; transform: translateY(var(--fly, -180px)) scale(.3); } }
+  @keyframes sweep { 0% { opacity: 1; background-position: -160px 0; } 100% { opacity: 1; background-position: 260px 0; } }
+  @keyframes fade { 0%, 60% { visibility: visible; } 62%, 100% { visibility: hidden; } }
+</style>
+<div id="stage">
+  <div id="glow"></div>
+  <div class="ring"></div><div class="ring two"></div>
+  <img id="logo" src="assets/logo.png" alt="">
+  <div id="sweep"></div>
+</div>
+<script>
+// the stage sits in the middle of the window; the logo flies up to where the pill is (passed in the address)
+const q = new URLSearchParams(location.search), H = innerHeight, cy = Math.round(H * 0.5), pillY = Number(q.get('pill') || 17);
+document.documentElement.style.setProperty('--cy', cy + 'px');
+const rgb = (hex) => (/^[0-9a-f]{6}$/i.test(hex || '') ? [0, 2, 4].map((i) => parseInt(hex.slice(i, i + 2), 16)).join(', ') : null);
+if (rgb(q.get('c1'))) document.documentElement.style.setProperty('--c1', rgb(q.get('c1')));
+if (rgb(q.get('c2'))) document.documentElement.style.setProperty('--c2', rgb(q.get('c2')));
+document.documentElement.style.setProperty('--fly', (pillY - cy) + 'px');
+</script>

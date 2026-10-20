@@ -1,0 +1,148 @@
+<!doctype html>
+<meta charset="utf-8">
+<style>
+  :root { --ease: cubic-bezier(.32, .72, 0, 1); --icon: 58px; }
+  * { box-sizing: border-box; margin: 0; user-select: none; -webkit-user-select: none; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: transparent; font: 12px -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; color: #f2f2f7; }
+  #ring { position: absolute; inset: 0; }
+  .center, .item { position: absolute; border-radius: 50%; display: flex; align-items: center; justify-content: center; }
+  .center { left: 50%; top: 50%; width: calc(var(--icon) * 1.3); height: calc(var(--icon) * 1.3); margin-left: calc(var(--icon) * -.65); margin-top: calc(var(--icon) * -.65); background: #0b0b0e; border: 1px solid #ffffff22; box-shadow: 0 8px 30px #0009; cursor: default; animation: pop .35s var(--ease) both; }
+  .center img { width: 50%; height: auto; opacity: .95; }
+  .center.back { background: #f2f2f7; cursor: pointer; }
+  .center.back:hover { background: #fff; }
+  .center svg { width: 40%; height: 40%; fill: none; stroke: #111; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+  .item { width: var(--icon); height: var(--icon); margin: calc(var(--icon) / -2) 0 0 calc(var(--icon) / -2); background: #17171bf2; border: 1px solid #ffffff24; box-shadow: 0 8px 24px #0009; cursor: pointer; color: #f2f2f7; transition: transform .18s var(--ease), background .18s ease, border-color .18s ease, opacity .2s ease; animation: pop .4s var(--ease) both; }
+  .item.sq { border-radius: 28%; }
+  .item:hover, .item.hl { transform: scale(1.12); background: #2a2a31; border-color: #0a84ff; }
+  .item svg { width: 45%; height: 45%; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; pointer-events: none; }
+  .item img { width: 56%; height: 56%; pointer-events: none; }
+  .item b { font-size: 18px; pointer-events: none; }
+  .item.empty { opacity: .35; cursor: default; }
+  .dim { opacity: .25; }
+  /* the impact when something is chosen: a quick press, a flash and a ring that spreads out */
+  .item.impact { animation: impact .34s cubic-bezier(.2, .8, .2, 1) both; background: #fff; color: #000; border-color: #fff; z-index: 3; }
+  .item.impact::after, .center.impact::after { content: ''; position: absolute; inset: -3px; border-radius: inherit; border: 2px solid #0a84ff; animation: ripple .5s ease-out forwards; pointer-events: none; }
+  .center.impact { animation: impactc .3s cubic-bezier(.2, .8, .2, 1) both; }
+  @keyframes impact { 0% { transform: scale(1.12); } 30% { transform: scale(.86); } 62% { transform: scale(1.3); } 100% { transform: scale(1.16); } }
+  @keyframes impactc { 0% { transform: scale(1); } 35% { transform: scale(.88); } 100% { transform: scale(1); } }
+  @keyframes ripple { from { transform: scale(1); opacity: .95; } to { transform: scale(2.1); opacity: 0; } }
+  .dot { position: absolute; width: 22px; height: 22px; margin: -11px 0 0 -11px; border-radius: 50%; border: 2px solid #fff; box-shadow: 0 0 0 1px #000a, 0 4px 12px #0009; cursor: pointer; animation: pop .25s var(--ease) both; transition: transform .14s var(--ease); }
+  .dot:hover { transform: scale(1.25); }
+  #empty { position: absolute; left: 50%; top: calc(50% + 70px); transform: translateX(-50%); padding: 6px 10px; border-radius: 12px; background: #17171bf2; border: 1px solid #ffffff24; font-size: 11px; color: #d0d0d8; white-space: nowrap; }
+  #tag { position: absolute; left: 50%; bottom: 20px; transform: translateX(-50%); display: flex; background: #0b0b0ef0; border: 1px solid #ffffff22; border-radius: 14px; overflow: hidden; white-space: nowrap; font-weight: 600; animation: rise .4s var(--ease) .08s both; }
+  #tag b, #tag span { padding: 4px 10px; font-size: 11px; }
+  #tag span { background: #ffffff14; color: #d0d0d8; font-weight: 500; }
+  @keyframes pop { from { transform: scale(.3); opacity: 0; } to { transform: none; opacity: 1; } }
+  @keyframes rise { from { opacity: 0; transform: translate(-50%, 8px); } to { opacity: 1; transform: translate(-50%, 0); } }
+</style>
+<div id="ring"></div>
+<div id="tag"><b id="tagname">Island Link</b><span id="hint">Center</span></div>
+<script src="assets/wheel.js"></script>
+<script>
+const W = window.Wheel, ring = document.getElementById('ring'), hint = document.getElementById('hint'), tagname = document.getElementById('tagname');
+let data = null, view = 'main', els = [], list = [], hl = -1, busy = false, dotTimer = null, enterTimer = null;
+const BACK = W.ICONS.back2;
+const clear = () => { ring.innerHTML = ''; els = []; hl = -1; };
+
+function centerEl(isBack) {
+  const c = document.createElement('div');
+  c.className = 'center' + (isBack ? ' back' : '');
+  c.innerHTML = isBack ? BACK : '<img alt="" src="' + data.logo + '">';
+  if (!isBack) { c.style.cursor = 'pointer'; c.title = 'Close'; c.onclick = () => window.radial.close(); }
+  if (isBack) { c.onclick = () => { if (busy) return; busy = true; c.classList.add('impact'); setTimeout(() => { busy = false; render('main'); }, 200); }; c.onmouseenter = () => { hint.textContent = 'Back'; }; }
+  ring.appendChild(c);
+}
+
+function itemEl(it, pos, i) {
+  const el = document.createElement('div');
+  el.className = 'item' + (it.kind === 'app' || it.kind === 'url' || it.kind === 'folder' ? ' sq' : '') + (it.kind === 'action' && it.action === 'none' ? ' empty' : '');
+  el.style.left = `calc(50% + ${pos.x}px)`; el.style.top = `calc(50% + ${pos.y}px)`; el.style.animationDelay = (40 + i * 35) + 'ms';
+  if (it.kind === 'action') el.innerHTML = W.ICONS[it.action] || W.ICONS.none;
+  else if (it.kind === 'workspace') el.innerHTML = W.ICONS.workspace;
+  else if (it.icon) el.innerHTML = '<img alt="" src="' + it.icon + '">';
+  else el.innerHTML = it.kind === 'url' ? W.ICONS.url : it.kind === 'folder' ? W.ICONS.folder : '<b>' + (it.label || '?').slice(0, 1).toUpperCase() + '</b>';
+  // a workspace opens as soon as the pointer rests on it (no click needed); clicking it still works
+  el.onmouseenter = () => {
+    hint.textContent = it.label;
+    if (it.kind === 'action' && it.action === 'pickColor') showDots(pos);
+    if (it.kind === 'workspace') { clearTimeout(enterTimer); if (!busy && view === 'main') render(it.ws); }
+  };
+  el.onmouseleave = () => {
+    hint.textContent = view === 'main' ? 'Center' : 'Back';
+    clearTimeout(enterTimer);
+    if (it.kind === 'action' && it.action === 'pickColor') hideDotsSoon();
+  };
+  el.onclick = () => activate(i);
+  return el;
+}
+
+function render(id) {
+  view = id; clear();
+  const ws = id === 'main' ? null : data.workspaces[id];
+  list = id === 'main' ? data.items : (ws ? ws.items : []);
+  tagname.textContent = ws ? ws.name : 'Island Link';
+  hint.textContent = ws ? 'Back' : 'Center';
+  document.documentElement.style.setProperty('--icon', data.cfg.appearance.icon + 'px');
+  centerEl(!!ws);
+  const { pos } = W.layout(list.length, data.cfg.appearance);
+  list.forEach((it, i) => { const el = itemEl(it, pos[i], i); els.push(el); ring.appendChild(el); });
+  if (!list.length) { const e = document.createElement('div'); e.id = 'empty'; e.textContent = ws ? 'Add shortcuts in the radial settings' : 'Nothing here yet'; ring.appendChild(e); }
+}
+
+// the impact: the chosen item is pressed, flashes and sends out a ring while the others fade
+function impact(el, done) {
+  busy = true;
+  els.forEach((o) => o !== el && o.classList.add('dim'));
+  el.classList.add('impact');
+  setTimeout(() => { busy = false; done(); }, 230);
+}
+
+function activate(i) {
+  const it = list[i];
+  if (!it || busy || (it.kind === 'action' && it.action === 'none')) return;
+  impact(els[i], () => {
+    if (it.kind === 'workspace') render(it.ws);
+    else if (it.kind === 'action') window.radial.action(it.action);
+    else window.radial.run({ ws: it.ws, index: it.index });
+  });
+}
+
+// colors picked before, on a small arc around the Pick-a-color button
+const clearDots = () => ring.querySelectorAll('.dot').forEach((n) => n.remove());
+const hideDotsSoon = () => { clearTimeout(dotTimer); dotTimer = setTimeout(clearDots, 320); };
+function showDots(p) {
+  clearTimeout(dotTimer); clearDots();
+  const colors = data.colors || [], n = colors.length;
+  if (!n) { hint.textContent = 'No colors yet'; return; }
+  const dir = Math.atan2(p.y, p.x), off = data.cfg.appearance.icon * 0.5 + 24;
+  colors.forEach((c, i) => {
+    const ang = dir + (i - (n - 1) / 2) * 0.46;
+    const el = document.createElement('div');
+    el.className = 'dot'; el.style.background = c; el.title = c;
+    el.style.left = `calc(50% + ${Math.round(p.x + off * Math.cos(ang))}px)`; el.style.top = `calc(50% + ${Math.round(p.y + off * Math.sin(ang))}px)`; el.style.animationDelay = (i * 30) + 'ms';
+    el.onmouseenter = () => { clearTimeout(dotTimer); hint.textContent = c; };
+    el.onmouseleave = () => { hint.textContent = 'Pick color'; hideDotsSoon(); };
+    el.onclick = () => window.radial.color(c);
+    ring.appendChild(el);
+  });
+}
+
+// hold mode: the main process reports the pointer while the button is down; releasing picks what is pointed at
+function highlight(i) {
+  if (i === hl) return;
+  if (hl >= 0 && els[hl]) els[hl].classList.remove('hl');
+  hl = i;
+  if (i >= 0 && els[i]) { els[i].classList.add('hl'); hint.textContent = list[i].label; } else hint.textContent = view === 'main' ? 'Center' : 'Back';
+}
+window.radial.onCursor(({ x, y }) => {
+  const i = W.pick(list.length, data.cfg.appearance, x, y, data.cfg.zone);
+  highlight(i);
+  clearTimeout(enterTimer);
+  if (i >= 0 && list[i].kind === 'workspace' && view === 'main' && !busy) render(list[i].ws);
+});
+window.radial.onRelease(() => { if (hl >= 0) activate(hl); });
+
+window.radial.onOpen((d) => { data = d; busy = false; render('main'); });
+addEventListener('contextmenu', (e) => { e.preventDefault(); window.radial.close(); });
+addEventListener('keydown', (e) => { if (e.key === 'Escape') window.radial.close(); });
+</script>

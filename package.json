@@ -1,0 +1,129 @@
+{
+  "name": "island-link",
+  "version": "1.0.0",
+  "description": "A Dynamic Island style pill with a shared mouse, keyboard, clipboard and file tray for Windows and macOS",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test test/*.test.js",
+    "dist:win": "electron-builder --win --publish never",
+    "dist:mac": "electron-builder --mac --publish never",
+    "pack": "electron-builder --dir"
+  },
+  "author": {
+    "name": "Mujib",
+    "email": "mujibnusapati93@gmail.com"
+  },
+  "license": "UNLICENSED",
+  "type": "commonjs",
+  "dependencies": {
+    "@mediapipe/tasks-vision": "^1.1.1",
+    "@nut-tree-fork/nut-js": "^4.2.6",
+    "koffi": "^2.16.3",
+    "uiohook-napi": "^1.5.5",
+    "ws": "^8.22.0"
+  },
+  "productName": "Island Link",
+  "build": {
+    "appId": "app.islandlink.desktop",
+    "productName": "Island Link",
+    "asar": false,
+    "files": [
+      "package.json",
+      "src/**/*",
+      "!src/**/*.md",
+      "node_modules/**/*",
+      "!node_modules/**/{test,tests,docs,example,examples}/**",
+      "!node_modules/electron/**",
+      "!node_modules/@mediapipe/**",
+      "!node_modules/rcedit/**",
+      "THIRD-PARTY-NOTICES.md"
+    ],
+    "directories": {
+      "output": "dist"
+    },
+    "artifactName": "Island-Link-${version}-${os}-${arch}.${ext}",
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "signAndEditExecutable": false,
+      "files": [
+        "package.json",
+        "src/**/*",
+        "!src/**/*.md",
+        "node_modules/**/*",
+        "!node_modules/**/{test,tests,docs,example,examples}/**",
+        "!node_modules/electron/**",
+        "!node_modules/@mediapipe/**",
+        "!node_modules/rcedit/**",
+        "THIRD-PARTY-NOTICES.md",
+        "!node_modules/koffi/build/koffi/{darwin_*,linux_*,freebsd_*,openbsd_*,musl_*,win32_ia32,win32_arm64}/**",
+        "!node_modules/uiohook-napi/prebuilds/{darwin-*,linux-*,win32-arm64}/**",
+        "!node_modules/@nut-tree-fork/{libnut-darwin,libnut-linux}/**",
+        "!src/vendor/mediaremote/**"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "runAfterFinish": true
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        }
+      ],
+      "category": "public.app-category.utilities",
+      "identity": null,
+      "extendInfo": {
+        "NSCameraUsageDescription": "Island Link uses the camera only on this computer to follow your head and switch computers. Video never leaves this computer.",
+        "LSUIElement": true
+      },
+      "files": [
+        "package.json",
+        "src/**/*",
+        "!src/**/*.md",
+        "node_modules/**/*",
+        "!node_modules/**/{test,tests,docs,example,examples}/**",
+        "!node_modules/electron/**",
+        "!node_modules/@mediapipe/**",
+        "!node_modules/rcedit/**",
+        "THIRD-PARTY-NOTICES.md",
+        "!node_modules/koffi/build/koffi/{linux_*,freebsd_*,openbsd_*,musl_*,win32_*}/**",
+        "!node_modules/uiohook-napi/prebuilds/{linux-*,win32-*}/**",
+        "!node_modules/@nut-tree-fork/{libnut-linux,libnut-win32}/**",
+        "!src/media.ps1",
+        "!src/apps.ps1"
+      ]
+    },
+    "dmg": {
+      "title": "Install Island Link"
+    },
+    "npmRebuild": false,
+    "afterPack": "build/afterPack.js",
+    "compression": "maximum",
+    "electronLanguages": [
+      "en-US",
+      "id"
+    ]
+  },
+  "devDependencies": {
+    "electron": "^44.9.0",
+    "electron-builder": "^26.15.3",
+    "rcedit": "^5.0.2"
+  },
+  "private": true
+}

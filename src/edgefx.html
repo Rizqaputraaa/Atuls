@@ -1,0 +1,60 @@
+<!doctype html>
+<meta charset="utf-8">
+<style>
+  * { margin: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: transparent; }
+  :root { --c: 10, 132, 255; --c2: 120, 190, 255; }
+  body.leave { --c: 255, 255, 255; --c2: 200, 225, 255; }
+  body.return { --c: 48, 209, 88; --c2: 150, 240, 170; }
+  /* the whole screen edge flashes once: a soft inner glow and a thin bright line */
+  #frame { position: absolute; inset: 0; opacity: 0; box-shadow: inset 0 0 0 0 rgba(var(--c2), 0); }
+  .play #frame { animation: frame var(--dur, .9s) ease-out forwards; }
+  @keyframes frame {
+    0% { opacity: 1; box-shadow: inset 0 0 0 0 rgba(var(--c2), 0), inset 0 0 0 0 rgba(var(--c), 0); }
+    14% { opacity: 1; box-shadow: inset 0 0 0 3px rgba(var(--c2), .95), inset 0 0 70px 8px rgba(var(--c), .55); }
+    100% { opacity: 0; box-shadow: inset 0 0 0 1px rgba(var(--c2), 0), inset 0 0 130px 0 rgba(var(--c), 0); }
+  }
+  /* a stronger glow on the edge the pointer came through, around the entry point */
+  #glow { position: absolute; opacity: 0; pointer-events: none; }
+  .play #glow { animation: glow var(--dur, .9s) cubic-bezier(.2, .8, .2, 1) forwards; }
+  @keyframes glow { 0% { opacity: 0; transform: scale(.4); } 18% { opacity: 1; } 100% { opacity: 0; transform: scale(1.25); } }
+  /* rings that spread out from the entry point (the screen edge cuts them in half) */
+  .ring { position: absolute; border-radius: 50%; border: 2px solid rgba(var(--c2), .9); opacity: 0; box-shadow: 0 0 24px rgba(var(--c), .7), inset 0 0 24px rgba(var(--c), .35); transform: translate(-50%, -50%) scale(.05); }
+  .play .ring { animation: ring var(--dur, .9s) cubic-bezier(.16, .8, .3, 1) forwards; }
+  .play .ring:nth-child(2) { animation-delay: .09s; }
+  .play .ring:nth-child(3) { animation-delay: .18s; }
+  @keyframes ring { 0% { opacity: .95; transform: translate(-50%, -50%) scale(.05); } 100% { opacity: 0; transform: translate(-50%, -50%) scale(1); } }
+</style>
+<div id="frame"></div>
+<div id="glow"></div>
+<div class="ring"></div><div class="ring"></div><div class="ring"></div>
+<script>
+// data: { kind: 'enter' | 'leave' | 'return', edge: 'left' | 'right' | 'top' | 'bottom', x, y } (x and y inside this screen, in px)
+window.fx.onPlay(({ kind, edge, x, y, colors }) => {
+  const W = innerWidth, H = innerHeight;
+  document.body.className = kind;
+  // the colours picked in Settings replace the built-in ones for every kind of effect
+  const parse = (hex) => (/^#[0-9a-f]{6}$/i.test(hex || '') ? [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)) : null);
+  const c1 = parse(colors && colors.c1);
+  // only the glow colour picked: the bright core and the line become a lighter tint of it, never the built-in blue
+  const c2 = parse(colors && colors.c2) || (c1 ? c1.map((v) => Math.round(v + (255 - v) * 0.45)) : null);
+  for (const [prop, v] of [['--c', c1], ['--c2', c2]]) { if (v) document.body.style.setProperty(prop, v.join(', ')); else document.body.style.removeProperty(prop); }
+  const glow = document.getElementById('glow'), rings = document.querySelectorAll('.ring');
+  // entry point on the chosen edge
+  const px = edge === 'left' ? 0 : edge === 'right' ? W : Math.max(0, Math.min(W, x));
+  const py = edge === 'top' ? 0 : edge === 'bottom' ? H : Math.max(0, Math.min(H, y));
+  const R = kind === 'enter' ? 360 : 240;
+  const dur = kind === 'enter' ? 0.95 : 0.7;
+  document.documentElement.style.setProperty('--dur', dur + 's');
+  rings.forEach((r, i) => { const d = R * (2 - i * 0.35); r.style.width = r.style.height = d + 'px'; r.style.left = px + 'px'; r.style.top = py + 'px'; });
+  const horizontal = edge === 'left' || edge === 'right';
+  const len = 560, thick = 190;
+  glow.style.width = (horizontal ? thick : len) + 'px'; glow.style.height = (horizontal ? len : thick) + 'px';
+  glow.style.left = (horizontal ? (edge === 'left' ? 0 : W - thick) : px - len / 2) + 'px';
+  glow.style.top = (horizontal ? py - len / 2 : (edge === 'top' ? 0 : H - thick)) + 'px';
+  const at = horizontal ? (edge === 'left' ? 'left' : 'right') + ' center' : 'center ' + (edge === 'top' ? 'top' : 'bottom');
+  glow.style.background = `radial-gradient(ellipse at ${at}, rgba(var(--c2), .85) 0%, rgba(var(--c), .45) 35%, rgba(var(--c), 0) 72%)`;
+  glow.style.transformOrigin = at;
+  document.body.classList.remove('play'); void document.body.offsetWidth; document.body.classList.add('play');
+});
+</script>
