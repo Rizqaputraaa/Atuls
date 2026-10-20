@@ -836,13 +836,18 @@ let gazeSuspended = false, gazeWakeUntil = 0;
 // (8 seconds or more): moving it means a camera start and a model warm-up of a couple of seconds, during which head tracking is blind. At the
 // first contact the computer with the higher id gets it, so both always agree.
 const GAZE_STICKY_S = 8;
-let peerIdle = null, peerCal = false, gazeMine = true, gazeDecided = false;
+let peerIdle = null, peerCal = false, peerCam = false, peerCalibrating = false, gazeMine = true, gazeDecided = false, linkSeenAt = 0;
 const myCal = () => !!(link && link.peer && gazeCals()[link.peer.id]);
 const handIdle = () => (link && link.physicalAt ? (Date.now() - link.physicalAt) / 1000 : 3600);
 function gazeBalance() {
   let mine = gazeMine;
-  if (!link || !link.peer || peerIdle === null) { mine = true; gazeDecided = false; } // alone, or the other side does not say: run
+  if (!link || !link.peer) { mine = true; gazeDecided = false; linkSeenAt = 0; } // alone: run
+  else if (peerIdle === null) { // linked, but the other side has not said anything yet: wait a moment instead of both opening the camera
+    if (!linkSeenAt) linkSeenAt = Date.now();
+    mine = Date.now() - linkSeenAt > 5000;
+  }
   else if (calibBusy) mine = true; // calibrating here
+  else if (peerCalibrating) mine = false; // calibrating there
   // one calibration is enough: it can track the head in both directions, so the camera belongs to the computer that has one
   else if (myCal() !== peerCal) mine = myCal();
   else if (!gazeDecided) { mine = link.id > link.peer.id; gazeDecided = true; }
@@ -851,14 +856,20 @@ function gazeBalance() {
     if (gazeMine && peerIdle < my - GAZE_STICKY_S) mine = false;
     else if (!gazeMine && my < peerIdle - GAZE_STICKY_S) mine = true;
   }
+  // never two cameras: when the other computer says its camera is on as well, the one where a hand was used last keeps it (a tie goes by id)
+  if (mine && peerCam && link && link.peer && !calibBusy && !peerCalibrating && peerIdle !== null) {
+    const my = handIdle();
+    mine = my < peerIdle || (my === peerIdle && link.id > link.peer.id);
+  }
   if (mine === gazeMine) return;
   gazeMine = mine;
   lifecycle.line('look to switch: ' + (mine ? 'the camera of this computer is the one in use' : 'the other computer is in use, this camera is closed'));
   applyGaze();
+  gazeShareIdle(true); // tell the other computer at once, so it does not wait for the next round
 }
-function gazeShareIdle() {
-  if (link && link.sock) link.send({ t: 'gazeidle', idle: Math.round(handIdle()), cal: myCal() });
-  gazeBalance();
+function gazeShareIdle(noBalance) {
+  if (link && link.sock) link.send({ t: 'gazeidle', idle: Math.round(handIdle()), cal: myCal(), cam: !!(gazeMine && gazeOn() && !gazeSuspended), calibrating: !!calibBusy });
+  if (!noBalance) gazeBalance();
 }
 // The camera is also closed after 10 minutes without any keyboard or mouse use, or while the screen is locked, and it opens again at the first
 // touch. It is never closed for idleness while calibrating, just after the person asked for it, or during control.
@@ -873,8 +884,8 @@ function gazeIdleWatch() {
   };
   setInterval(check, 5000);
   setInterval(gazeShareIdle, 3000);
-  link.on('gazeidle', (n) => { peerIdle = n && Number.isFinite(n.idle) ? n.idle : null; peerCal = !!(n && n.cal); gazeBalance(); });
-  link.on('status', (st) => { if (!st.connected) peerIdle = null; gazeBalance(); });
+  link.on('gazeidle', (n) => { peerIdle = n && Number.isFinite(n.idle) ? n.idle : null; peerCal = !!(n && n.cal); peerCam = !!(n && n.cam); peerCalibrating = !!(n && n.calibrating); gazeBalance(); });
+  link.on('status', (st) => { if (!st.connected) { peerIdle = null; peerCam = false; peerCalibrating = false; linkSeenAt = 0; } gazeBalance(); });
   powerMonitor.on('lock-screen', () => { screenLocked = true; check(); });
   powerMonitor.on('unlock-screen', () => { screenLocked = false; check(); });
 }
@@ -899,7 +910,7 @@ async function applyGaze() {
     gazeWin.webContents.on('console-message', (_e, _l, msg) => { console.log('[gaze]', msg); if (/gaze|delegate|failed|error/i.test(msg) && !/Security Warning/.test(msg)) lifecycle.line('gaze page: ' + String(msg).slice(0, 220)); });
     gazeWin.on('close', (e) => { if (!gazeQuit && gazeWin && !gazeWin.isDestroyed()) { e.preventDefault(); setPreview(false); } }); // closing the preview only hides it
     gazeWin.on('closed', () => { gazeWin = null; gazeCam = false; pushGaze(); });
-    gazeWin.loadFile(path.join(__dirname, 'gaze.html')).then(() => gazeWin && gazeWin.webContents.send('gaze:cmd', 'start'));
+    gazeWin.loadFile(path.join(__dirname, 'gaze.html')).then(() => gazeWin && !gazeWin.isDestroyed() && gazeWin.webContents.send('gaze:cmd', 'start')).catch(() => {}); // closed again while loading: nothing to do
   } else if (!want && gazeWin) {
     if (!gazeWin.isDestroyed()) gazeWin.destroy();
     gazeWin = null; gazeCam = false; calib = null; calibBusy = false; zones.reset();

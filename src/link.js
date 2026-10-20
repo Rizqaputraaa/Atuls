@@ -1231,7 +1231,12 @@ class Link extends EventEmitter {
     if (button === 4 || button === 5) this.sideChord(down, button);
     else if (down) this.buttonsDown.add(button);
     else this.buttonsDown.delete(button);
-    if (this.state === 'controlling' && Date.now() >= this.ignoreButtonsUntil) this.send({ t: down ? 'down' : 'up', b: button, n: clicks }); }
+    if (this.state !== 'controlling') return;
+    if (Date.now() < this.ignoreButtonsUntil) { this.dc('btn.held'); return; }
+    this.dc(down ? 'btn.tx' : 'btn.tx.up');
+    if (down && (this.btnTxLog = (this.btnTxLog || 0) + 1) <= 6) { try { require('./lifecycle').line('button ' + button + ' sent to the other computer'); } catch {} }
+    this.send({ t: down ? 'down' : 'up', b: button, n: clicks });
+  }
   // rotation 0 is a partial notch from a smooth-scrolling device: nothing to forward (it used to scroll up by accident)
   onLocalWheel(direction, rotation) {
     // the Windows hook and the Mac overlay deliver scrolling themselves; this is only the fallback
@@ -1359,7 +1364,8 @@ class Link extends EventEmitter {
         if (this.state === 'controlled' && m.k === 'chord') { const a = this.buttonMap.chord; if (!this.runAction(a, 'chord', 0)) this.shoot(); break; }
         if (this.state === 'controlled' && (m.k === 'back' || m.k === 'forward')) { const a = this.buttonMap[m.k]; this.runAction(!a || a === 'default' ? m.k : a, m.k, 0); } break;
       case 'down':
-        if (this.state !== 'controlled') break;
+        if (this.state !== 'controlled') { this.dc('btn.rx.ignored'); break; }
+        this.dc('btn.rx');
         this.checkElevated();
         if (this.picker && (m.b === 1 || m.b === 2)) { if (m.b === 1) this.picker.pick(); else this.picker.cancel(); this.remoteEat = m.b; break; }
         if (m.b === 3) { const a = this.buttonMap.middle; if (a && a !== 'default') { this.midRemote = true; this.runAction(a, 'middle', 0); break; } }
