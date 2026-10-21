@@ -1,6 +1,7 @@
 name: Build and release
 
-# Push a tag such as v1.0.1 to build the Windows installer and the macOS disk images and attach them to a GitHub Release.
+# Push a tag such as v1.0.6 to build the Windows installer and the macOS disk images and attach them to one GitHub Release.
+# (The release is made by a separate job after both builds, so the two builds do not race to create it.)
 on:
   push:
     tags: ['v*']
@@ -36,15 +37,25 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: a-tuls-${{ matrix.os }}
+          # latest.yml and the block maps are what the in-app updater reads
           path: |
             dist/*.exe
             dist/*.dmg
+            dist/*.blockmap
+            dist/latest*.yml
           if-no-files-found: error
-      - name: Attach to the release
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
         with:
-          files: |
-            dist/*.exe
-            dist/*.dmg
+          path: dist
+          merge-multiple: true
+      - run: ls -la dist
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
           generate_release_notes: true
