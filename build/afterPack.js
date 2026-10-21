@@ -3,6 +3,15 @@
 const path = require('path');
 
 exports.default = async function afterPack(context) {
+  if (context.electronPlatformName === 'darwin') {
+    // No paid certificate yet: an ad-hoc signature (no identity) at least makes the app a valid, complete bundle. Without any signature macOS on
+    // Apple Silicon calls a downloaded app "damaged"; with this one the person gets the usual "unidentified developer" message and can allow it.
+    const { execFileSync } = require('child_process');
+    const app = path.join(context.appOutDir, `${context.packager.appInfo.productFilename}.app`);
+    execFileSync('codesign', ['--force', '--deep', '--sign', '-', app], { stdio: 'inherit' });
+    console.log('  • ad-hoc signature written to', path.basename(app));
+    return;
+  }
   if (context.electronPlatformName !== 'win32') return;
   const { rcedit } = require('rcedit');
   const exe = path.join(context.appOutDir, `${context.packager.appInfo.productFilename}.exe`);
