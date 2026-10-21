@@ -1,0 +1,5 @@
+Catatan BUG atau UX A-Tuls
+
+1. Pas pencet mouse pc untuk button back dan forwardnya untuk back di file explorer langsung ada lag lag padahal sebelumnya aman.
+2. Beberapa waktu pandai disconnected, itu kenapa, dan kalau disconnected berikan notifikasi.
+3. 

@@ -1044,7 +1044,10 @@ function closeIfPinnedOutside() {
 }
 
 function createTray() {
-  tray = new Tray(MAC ? pillIcon() : nativeImage.createFromBitmap(Buffer.alloc(16 * 16 * 4, 255), { width: 16, height: 16 }));
+  let trayImg = null;
+  if (MAC) trayImg = pillIcon();
+  else { try { trayImg = nativeImage.createFromPath(path.join(__dirname, 'assets', 'icon.png')).resize({ width: 16, height: 16 }); } catch {} if (!trayImg || trayImg.isEmpty()) trayImg = nativeImage.createFromBitmap(Buffer.alloc(16 * 16 * 4, 255), { width: 16, height: 16 }); }
+  tray = new Tray(trayImg);
   tray.setToolTip('A-tuls');
   tray.setContextMenu(Menu.buildFromTemplate([
     { label: 'Show island', click: () => win.showInactive() },
@@ -1127,7 +1130,7 @@ app.whenReady().then(() => {
   ipcMain.handle('fx:test', () => { edgefx.play({ kind: 'enter', edge: 'left' }); });
   // A link that ends (cable, Wi-Fi, sleep, or the other computer disconnecting) stays ended: nothing reconnects by itself. The person connects it
   // again from the Link tab (Recent: one click, no code).
-  link.on('lost', (peer) => lifecycle.line(`link ended: ${peer.name} (${peer.host})`));
+  link.on('lost', (peer) => { lifecycle.line(`link ended: ${peer.name} (${peer.host})`); toast('Disconnected', `The link to ${peer.name} was lost`, 'err'); });
   radial.init({ store, link, toast, pickColor, saveColor, MAC });
   // other computers on this network that run A-tuls (shown in the Link tab)
   const { Discovery } = require('./discovery');

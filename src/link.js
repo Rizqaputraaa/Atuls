@@ -574,7 +574,7 @@ class Link extends EventEmitter {
     if (this.xChord.delete(id)) { if (!this.xChord.size && !this.xDown.size) this.chordActive = false; return true; }
     if (this.xTimers.has(id)) { // a quick click: replay press and release together
       clearTimeout(this.xTimers.get(id)); this.xTimers.delete(id);
-      if (!this.xHandle(id)) { native.winCursor.xbutton(which, true); native.winCursor.xbutton(which, false); }
+      setImmediate(() => { if (!this.xHandle(id)) { native.winCursor.xbutton(which, true); native.winCursor.xbutton(which, false); } });
       return true;
     }
     if (this.xReplayed.delete(id)) return false; // the system saw the replayed press, so it gets the real release

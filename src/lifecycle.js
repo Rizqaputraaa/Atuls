@@ -10,6 +10,23 @@ const os = require('os');
 let file = null, vfile = null, flag = null, started = Date.now();
 const stamp = () => new Date().toISOString().replace('T', ' ').slice(0, 23);
 function line(msg) { try { fs.appendFileSync(file, `${stamp()}  ${msg}\n`); } catch {} }
+// Everything is kept for a long test (a week of normal use): the run log rotates at 10 MB and keeps 10 files, the very chatty lines (every injected
+// scroll step, key and window event) go to island-verbose.log, 20 MB x 4 files. Nothing is sent anywhere: the files stay in the data folder.
+function rotate(f, maxBytes, keep) {
+  try {
+    if (!fs.existsSync(f) || fs.statSync(f).size <= maxBytes) return;
+    for (let i = keep - 1; i >= 1; i--) { try { fs.renameSync(`${f}.${i}`, `${f}.${i + 1}`); } catch {} }
+    fs.renameSync(f, `${f}.1`);
+  } catch {}
+}
+let writes = 0;
+function verbose(msg) {
+  try {
+    if (!vfile) return;
+    fs.appendFileSync(vfile, `${stamp()}  ${msg}\n`);
+    if (++writes % 500 === 0) { rotate(vfile, 20e6, 4); rotate(file, 10e6, 10); }
+  } catch {}
+}
 
 function summariseCrash(since) {
   if (process.platform !== 'darwin') return;
