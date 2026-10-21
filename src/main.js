@@ -525,7 +525,7 @@ function setupSas() {
 let onboardWin = null;
 function showOnboard() {
   if (onboardWin && !onboardWin.isDestroyed()) return;
-  onboardWin = new BrowserWindow({ width: 480, height: 330, resizable: false, minimizable: false, maximizable: false, alwaysOnTop: true, center: true, title: 'A-tuls - allow access', backgroundColor: '#141416', webPreferences: { preload: path.join(__dirname, 'onboard-preload.js'), contextIsolation: true } });
+  onboardWin = new BrowserWindow({ width: 480, height: 400, resizable: false, minimizable: false, maximizable: false, alwaysOnTop: true, center: true, title: 'A-tuls - allow access', backgroundColor: '#141416', webPreferences: { preload: path.join(__dirname, 'onboard-preload.js'), contextIsolation: true } });
   onboardWin.setMenu(null);
   onboardWin.loadFile(path.join(__dirname, 'onboard.html'));
   onboardWin.on('closed', () => { onboardWin = null; });
@@ -557,6 +557,7 @@ function watchAccess() {
     }
   }, 1500).unref();
 }
+ipcMain.on('onboard:restart', () => { lifecycle.line('onboarding: restart asked'); app.relaunch(); app.quit(); });
 ipcMain.on('onboard:open', (_e, pane) => { if (/^Privacy_(Accessibility|ListenEvent)$/.test(pane)) shell.openExternal('x-apple.systempreferences:com.apple.preference.security?' + pane); });
 function startInput() {
   console.log('[island] checking input access');
