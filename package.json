@@ -1,6 +1,6 @@
 {
   "name": "a-tuls",
-  "version": "1.0.0",
+  "version": "1.0.4",
   "description": "A-tuls: a notch-style pill with a shared mouse, keyboard, clipboard, file tray and screenshots for Windows and macOS",
   "main": "src/main.js",
   "scripts": {
