@@ -767,4 +767,15 @@ const macMouse = {
   up: (b, x, y, state) => CG_BUTTON[b] && macPost(CG_BUTTON[b].up, x, y, CG_BUTTON[b].n, state || 1),
 };
 
-module.exports = { macDisplaySizes, winMonitorSizes, refreshWinMonitorSizes, matchSizes, reinstallHooks, removeHooks, winIdleMs, winModsHeld, installScrollTap, highResTimer, winCursor, setCursorHidden, installKeyBlocker, installMouseHook, macMouse, macMediaKey, macDragFiles, screenPixels, macHotKeyInfo, macPostHotKey, loadWin: () => loadWin() };
+// macOS: is Input Monitoring allowed? true / false, or null when the system does not say (then it is treated as allowed)
+let hidCheck = null;
+function macInputMonitoring() {
+  if (process.platform !== 'darwin' || !koffi) return null;
+  try {
+    if (!hidCheck) hidCheck = koffi.load('/System/Library/Frameworks/IOKit.framework/IOKit').func('uint32_t IOHIDCheckAccess(uint32_t type)');
+    const r = hidCheck(1); // kIOHIDRequestTypeListenEvent; 0 = granted, 1 = denied, 2 = not decided yet
+    return r === 0 ? true : r === 1 ? false : null;
+  } catch { return null; }
+}
+
+module.exports = { macInputMonitoring, macDisplaySizes, winMonitorSizes, refreshWinMonitorSizes, matchSizes, reinstallHooks, removeHooks, winIdleMs, winModsHeld, installScrollTap, highResTimer, winCursor, setCursorHidden, installKeyBlocker, installMouseHook, macMouse, macMediaKey, macDragFiles, screenPixels, macHotKeyInfo, macPostHotKey, loadWin: () => loadWin() };

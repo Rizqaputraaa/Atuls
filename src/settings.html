@@ -133,6 +133,8 @@ function save(rerender) {
   saveTimer = setTimeout(async () => { await window.rs.save(S.cfg); toast('Saved'); if (rerender) draw(); }, 250);
 }
 const seg = (opts, value, on) => h('div', { class: 'seg' }, opts.map(([v, label]) => h('button', { class: v === value ? 'on' : '', onclick: () => on(v) }, label)));
+let U = { status: 'idle' };
+const updText = () => ({ checking: 'Checking...', current: 'You have the latest version.', available: 'Version ' + U.latest + ' is available.', downloading: 'Downloading ' + (U.progress || 0) + '%...', ready: 'Version ' + U.latest + ' is ready. Restart to finish.', error: U.error || 'Could not check for updates.' }[U.status] || 'Looks for a newer version on its own; you can also check here.');
 const row = (title, desc, control, cls) => h('div', { class: 'row ' + (cls || '') }, h('div', { class: 't' }, h('b', {}, title), desc ? h('span', {}, desc) : null), control);
 const slider = (min, max, step, value, unit, on, fmt) => {
   const show = (v) => (fmt ? fmt(v) : v + unit);
@@ -438,6 +440,10 @@ function pageGeneral() {
           h('button', { class: 'btn', onclick: async () => { S.startup = await A.startupSet({ splashColors: { c1: '', c2: '' } }); toast('Back to the default colors'); draw(); } }, 'Reset'))),
       row('Screen-edge effect', 'A flash, a glow and rings on the edge of the one screen that becomes active when the pointer (or your head) moves control to this computer.',
         h('div', { style: 'display:flex;gap:10px;align-items:center' }, h('button', { class: 'btn', onclick: () => A.fxTest() }, 'Preview'), toggle(G.edgeFx !== false, async (v) => { S.startup = await A.startupSet({ edgeFx: v }); toast('Saved'); }))),
+      row('Updates', updText(), h('div', { style: 'display:flex;gap:10px;align-items:center' },
+        U.status === 'available' || U.status === 'ready' || U.status === 'downloading'
+          ? h('button', { class: 'btn', disabled: U.status === 'downloading', onclick: () => A.updInstall() }, U.status === 'ready' ? 'Restart to update' : U.manual ? 'Open download page' : 'Update now')
+          : h('button', { class: 'btn', disabled: U.status === 'checking', onclick: () => A.updCheck() }, 'Check for updates'))),
       row('About', 'A-tuls ' + (G.version || '') + '. Proprietary software. It includes open-source parts: Electron, ws, koffi, uiohook-napi, nut-js and MediaPipe (Apache-2.0). The full list is in THIRD-PARTY-NOTICES.md next to the app.', h('span', {}, ''))),
     h('div', { class: 'note' }, 'While two computers are linked, these settings follow each other: animation colors, start-up animation, screen-edge effect, edge resistance, game guard, Look to switch on/off, share clipboard and the screenshot options (on/off, format, size limit). These stay per computer: folders, mouse buttons, keyboard shortcuts, scroll feel, the wheel menu and the camera calibration.'),
   ];
@@ -469,6 +475,8 @@ document.querySelectorAll('aside button').forEach((b) => b.addEventListener('cli
 A.onGaze((g) => { if (!S) return; S.gaze = g; updateGaze(); });
 A.onColors((l) => { if (!S) return; S.colors = l; if (page === 'color') draw(); });
 A.onPerm((ok) => { if (!S) return; S.perm = ok; draw(); });
+A.updGet().then((u) => { U = u; if (S) draw(); }).catch(() => {});
+A.onUpdate((u) => { U = u; if (S && page === 'general') draw(); });
 Promise.all([window.rs.load(), A.startupGet(), A.prefsGet(), A.scrollGet(), A.tuneGet(), A.btnmapGet(), A.hotkeysGet(), A.clipGet(), A.shotGet(), A.gazeGet(), A.colorsGet(), A.permGet()]).then(([rs, startup, prefs, scroll, tune, map, hotkeys, clip, shot, gaze, colors, perm]) => {
   S = { ...rs, startup, prefs, scroll, tune, map, hotkeys, hkRows: hotkeys.map((x) => ({ ...x })), clip, shot, gaze, colors, perm };
   const want = new URLSearchParams(location.search).get('p');

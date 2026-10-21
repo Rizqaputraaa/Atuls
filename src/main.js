@@ -126,7 +126,7 @@ setInterval(() => {
     lifecycle.line(`health: cpu ${cpu.toFixed(1)}% mem ${Math.round(mem)} MB procs ${m.length} link ${link ? link.state + (link.sock ? ' linked' : ' alone') : '-'} camera ${typeof gazeWin !== 'undefined' && gazeWin ? 'on' : 'off'} up ${Math.round(process.uptime() / 60)} min`);
   } catch {}
 }, 60000).unref();
-const MIRRORED = new Set(['gaze', 'colors', 'perm']); // the settings window shows these as well
+const MIRRORED = new Set(['gaze', 'colors', 'perm', 'update']); // the settings window shows these as well
 const sendWin = (ch, ...a) => { if (win && !win.isDestroyed()) win.webContents.send(ch, ...a); if (MIRRORED.has(ch)) radial.sendSettings(ch, ...a); };
 // short banner that grows out of the pill for a few seconds
 let toastUntil = 0;
@@ -532,6 +532,31 @@ function showOnboard() {
   lifecycle.line('onboarding: asked the person to allow Accessibility and Input Monitoring');
 }
 function closeOnboard() { try { if (onboardWin && !onboardWin.isDestroyed()) { onboardWin.destroy(); lifecycle.line('onboarding: access allowed, window closed'); } } catch {} onboardWin = null; }
+// macOS: while a permission is missing, the window shows which one is still open and tells the person when everything is allowed (a short "all set"
+// message in the window, a notice on the pill, then the window closes). Nothing is shown when both are already allowed.
+let accessWatching = false, accessDismissed = false;
+function accessState() {
+  const ax = systemPreferences.isTrustedAccessibilityClient(false);
+  return { ax, im: native.macInputMonitoring() !== false };
+}
+function watchAccess() {
+  if (process.platform !== 'darwin' || accessWatching) return;
+  accessWatching = true;
+  let wasMissing = !!(onboardWin && !onboardWin.isDestroyed());
+  setInterval(() => {
+    const st = accessState();
+    const missing = !(st.ax && st.im);
+    if (missing && !wasMissing) { wasMissing = true; accessDismissed = false; lifecycle.line(`access missing: Accessibility ${st.ax ? 'ok' : 'needed'}, Input Monitoring ${st.im ? 'ok' : 'needed'}`); }
+    if (missing && !accessDismissed && (!onboardWin || onboardWin.isDestroyed())) { showOnboard(); onboardWin.on('closed', () => { if (accessState().ax === false || native.macInputMonitoring() === false) accessDismissed = true; }); }
+    if (onboardWin && !onboardWin.isDestroyed()) onboardWin.webContents.send('onboard:status', st);
+    if (!missing && wasMissing) {
+      wasMissing = false;
+      lifecycle.line('access: everything allowed');
+      toast('Access allowed', 'A-tuls is ready to use', 'ok');
+      setTimeout(closeOnboard, 2500);
+    }
+  }, 1500).unref();
+}
 ipcMain.on('onboard:open', (_e, pane) => { if (/^Privacy_(Accessibility|ListenEvent)$/.test(pane)) shell.openExternal('x-apple.systempreferences:com.apple.preference.security?' + pane); });
 function startInput() {
   console.log('[island] checking input access');
@@ -564,7 +589,7 @@ function startInput() {
       key: (name, down) => { link.lastHookKey = Date.now(); if (link.state === 'controlled' && (link.hookKeyLog = (link.hookKeyLog || 0) + 1) <= 8) lifecycle.line('hook saw key ' + name + (down ? ' down' : ' up') + ' while controlled'); link.onLocalKey(down, name); },
     });
     permOk = true;
-    closeOnboard();
+    watchAccess();
     console.log('[island] input hook started');
     if (process.platform === 'darwin' && native.installScrollTap((x, y) => link.onMacScroll(x, y))) console.log('[island] scroll tap installed');
     sendWin('perm', true);
@@ -1357,6 +1382,11 @@ app.whenReady().then(() => {
   link.on('status', () => { const id = link.peer && link.peer.id; if (id !== gazeActivePeer) { gazeActivePeer = id; applyGaze(); } });
   ipcMain.handle('link:status', () => link.status());
   ipcMain.handle('perm:get', () => permOk);
+  const updater = require('./updater');
+  updater.init((st) => { sendWin('update', st); if (st.status === 'available') toast('Update available', 'Version ' + st.latest + ' - open Settings > General', 'ok'); if (st.status === 'ready') toast('Update ready', 'Restart A-tuls to finish', 'ok'); }, (m) => lifecycle.line(m));
+  ipcMain.handle('update:get', () => updater.state);
+  ipcMain.handle('update:check', () => updater.check());
+  ipcMain.handle('update:install', () => updater.install());
   ipcMain.handle('clip:get', () => clipOn());
   const shotState = () => ({ on: shotOn(), dir: shotDir(), other: store.get('shotOther', true), format: store.get('shotFormat', 'png'), limitMb: store.get('shotLimitMb', 500), mac: MAC, macClip: store.get('macClip', true), sizeMb: Math.round(shotFolderFiles().reduce((n, x) => n + x.size, 0) / (1024 * 1024)) });
   ipcMain.handle('shot:get', shotState);

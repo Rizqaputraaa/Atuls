@@ -16,6 +16,7 @@
   .txt span { color: var(--mut); font-size: 12px; }
   button { padding: 8px 14px; border-radius: 9px; border: 0; background: #0a84ff; color: #fff; font: inherit; font-weight: 600; cursor: pointer; }
   button:hover { filter: brightness(1.1); }
+  .ok { color: var(--ok); font-weight: 700; white-space: nowrap; }
   #state { margin-top: 14px; color: var(--mut); font-size: 12px; text-align: center; }
   .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #ff9f0a; margin-right: 6px; animation: p 1.4s ease-in-out infinite; }
   @keyframes p { 50% { opacity: .35; } }
@@ -24,12 +25,17 @@
 <body>
   <h1>A-tuls needs two permissions</h1>
   <p>macOS asks you to allow it once, so A-tuls can share your mouse and keyboard with your other computer.</p>
-  <div class="step"><div class="num">1</div><div class="txt"><b>Accessibility</b><span>Lets A-tuls move the pointer and type for you.</span></div><button id="a">Open settings</button></div>
-  <div class="step"><div class="num">2</div><div class="txt"><b>Input Monitoring</b><span>Lets A-tuls notice your mouse and keys.</span></div><button id="i">Open settings</button></div>
+  <div class="step"><div class="num">1</div><div class="txt"><b>Accessibility</b><span>Lets A-tuls move the pointer and type for you.</span></div><span class="ok" id="sa" hidden>&#10003; Allowed</span><button id="a">Open settings</button></div>
+  <div class="step"><div class="num">2</div><div class="txt"><b>Input Monitoring</b><span>Lets A-tuls notice your mouse and keys.</span></div><span class="ok" id="si" hidden>&#10003; Allowed</span><button id="i">Open settings</button></div>
   <div id="state"><span class="dot"></span>Waiting. This window closes by itself when you have allowed it.</div>
 <script>
   document.getElementById('a').onclick = () => window.onboard.open('Privacy_Accessibility');
   document.getElementById('i').onclick = () => window.onboard.open('Privacy_ListenEvent');
+  const show = (id, ok) => { document.getElementById('s' + id).hidden = !ok; document.getElementById(id).hidden = ok; };
+  window.onboard.onStatus((st) => {
+    show('a', st.ax); show('i', st.im);
+    if (st.ax && st.im) { const s = document.getElementById('state'); s.style.color = '#30d158'; s.textContent = '✓ All set. A-tuls is ready to use.'; }
+  });
 </script>
 </body>
 </html>
