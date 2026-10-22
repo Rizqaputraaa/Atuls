@@ -790,12 +790,51 @@ function macTargetRestore() {
 let lastClip = '';
 const clipOn = () => store.get('clipboard', true);
 // Electron 44's clipboard API is promise based and has no image helpers: items carry MIME types and Blobs
+// On Windows, reading a picture from the clipboard can wait for the program that put it there (a screenshot tool, Photoshop) to produce it.
+// If that program is slow or stuck, the reader waits too, and when the reader is this app's main thread, the mouse and keyboard hooks wait with
+// it (that is how the whole system can lag or freeze). So: (1) the clipboard is only touched when its change counter moved, not every poll, and
+// (2) pictures are read by a small helper process that is given up on after 5 seconds, so a stuck owner can only block the helper.
+let clipSeq = -1;
+function clipboardMoved() {
+  if (process.platform !== 'win32') return true;
+  const s = native.winClipboardSeq();
+  if (s === null || s === undefined) return true;
+  if (s === clipSeq) return false;
+  clipSeq = s;
+  return true;
+}
+const IMAGE_HELPER = "Add-Type -AssemblyName System.Windows.Forms; Add-Type -AssemblyName System.Drawing; $i = [System.Windows.Forms.Clipboard]::GetImage(); if ($i) { $m = New-Object System.IO.MemoryStream; $i.Save($m, [System.Drawing.Imaging.ImageFormat]::Png); [Convert]::ToBase64String($m.ToArray()) }";
+function readImageViaHelper() {
+  return new Promise((resolve) => {
+    let out = '', done = false;
+    const finish = (v) => { if (done) return; done = true; clearTimeout(timer); resolve(v); };
+    let ps = null;
+    try { ps = require('child_process').spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Sta', '-Command', IMAGE_HELPER], { windowsHide: true }); } catch { return resolve(null); }
+    const timer = setTimeout(() => { try { ps.kill(); } catch {} lifecycle.line('clipboard picture: the program that owns it did not answer in 5 s, skipped'); finish(null); }, 5000);
+    ps.stdout.on('data', (d) => { out += d; });
+    ps.on('error', () => finish(null));
+    ps.on('close', () => finish(out.trim() ? Buffer.from(out.trim(), 'base64') : null));
+  });
+}
+// a change with nothing readable yet (the owner is still filling the clipboard) is looked at again a few times
+let clipEmpty = 0;
 async function readClip() {
+  if (!clipboardMoved()) return null;
+  const c = await readClipNow();
+  if (c) clipEmpty = 0; else if (++clipEmpty <= 3) clipSeq = -1;
+  return c;
+}
+async function readClipNow() {
   if (await clipboard.has('image/png')) {
-    const item = (await clipboard.read()).find((i) => i.types.includes('image/png'));
-    if (item) {
-      const png = Buffer.from(await (await item.getType('image/png')).arrayBuffer());
-      return { hash: 'i' + crypto.createHash('md5').update(png).digest('hex'), kind: 'image', data: png.toString('base64') };
+    if (process.platform === 'win32') {
+      const png = await readImageViaHelper();
+      if (png && png.length) return { hash: 'i' + crypto.createHash('md5').update(png).digest('hex'), kind: 'image', data: png.toString('base64') };
+    } else {
+      const item = (await clipboard.read()).find((i) => i.types.includes('image/png'));
+      if (item) {
+        const png = Buffer.from(await (await item.getType('image/png')).arrayBuffer());
+        return { hash: 'i' + crypto.createHash('md5').update(png).digest('hex'), kind: 'image', data: png.toString('base64') };
+      }
     }
   }
   const text = await clipboard.readText();

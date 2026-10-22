@@ -778,4 +778,15 @@ function macInputMonitoring() {
   } catch { return null; }
 }
 
-module.exports = { macInputMonitoring, macDisplaySizes, winMonitorSizes, refreshWinMonitorSizes, matchSizes, reinstallHooks, removeHooks, winIdleMs, winModsHeld, installScrollTap, highResTimer, winCursor, setCursorHidden, installKeyBlocker, installMouseHook, macMouse, macMediaKey, macDragFiles, screenPixels, macHotKeyInfo, macPostHotKey, loadWin: () => loadWin() };
+// Windows: a counter that changes whenever the clipboard changes. Reading it never waits for anybody, unlike reading the clipboard itself.
+let clipSeqFn = null;
+function winClipboardSeq() {
+  const api = loadWin();
+  if (!api) return null;
+  try {
+    if (!clipSeqFn) clipSeqFn = api.user32.func('uint32_t __stdcall GetClipboardSequenceNumber()');
+    return clipSeqFn();
+  } catch { return null; }
+}
+
+module.exports = { winClipboardSeq, macInputMonitoring, macDisplaySizes, winMonitorSizes, refreshWinMonitorSizes, matchSizes, reinstallHooks, removeHooks, winIdleMs, winModsHeld, installScrollTap, highResTimer, winCursor, setCursorHidden, installKeyBlocker, installMouseHook, macMouse, macMediaKey, macDragFiles, screenPixels, macHotKeyInfo, macPostHotKey, loadWin: () => loadWin() };
