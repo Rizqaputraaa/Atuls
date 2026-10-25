@@ -21,7 +21,7 @@ const MAC = process.platform === 'darwin';
 const WIN_W = MAC ? 464 : 234, WIN_H = 34;
 // Windows: the window keeps one size and only its visible/clickable shape follows the island. Resizing a transparent window
 // made the pill blink for a frame on every hover; reshaping does not.
-const WIN_FIXED = { w: 460, h: 380 };
+const WIN_FIXED = { w: 660, h: 460 };
 
 // tiny JSON store in userData
 const store = (() => {
@@ -37,7 +37,7 @@ const store = (() => {
 // The pairing tokens let another computer drive this one, so on disk they are encrypted with the system's own protection (Windows DPAPI,
 // the macOS Keychain) instead of lying in config.json as plain text. Old plain values are sealed the first time they are read. macOS
 // only does this in the installed app: a development run would ask for Keychain access each time.
-const SECRET_KEYS = new Set(['tokens', 'peers', 'peerTokens']);
+const SECRET_KEYS = new Set(['tokens', 'peers', 'peerTokens', 'calendars']);
 function protectedStore(base) {
   const canSeal = () => { try { return (process.platform === 'win32' || app.isPackaged) && safeStorage.isEncryptionAvailable(); } catch { return false; } };
   const seal = (v) => ({ enc: safeStorage.encryptString(JSON.stringify(v)).toString('base64') });
@@ -126,16 +126,67 @@ setInterval(() => {
     lifecycle.line(`health: cpu ${cpu.toFixed(1)}% mem ${Math.round(mem)} MB procs ${m.length} link ${link ? link.state + (link.sock ? ' linked' : ' alone') : '-'} camera ${typeof gazeWin !== 'undefined' && gazeWin ? 'on' : 'off'} up ${Math.round(process.uptime() / 60)} min`);
   } catch {}
 }, 60000).unref();
-const MIRRORED = new Set(['gaze', 'colors', 'perm', 'update']); // the settings window shows these as well
-const sendWin = (ch, ...a) => { if (win && !win.isDestroyed()) win.webContents.send(ch, ...a); if (MIRRORED.has(ch)) radial.sendSettings(ch, ...a); };
+const MIRRORED = new Set(['gaze', 'colors', 'perm', 'update', 'cal', 'look']); // the settings window shows these as well
+let lastMedia = null; // the page asks for nothing: when it (re)loads it is given what is playing right away
+const sendWin = (ch, ...a) => { if (ch === 'media') lastMedia = a[0] && a[0].title ? a[0] : null; if (win && !win.isDestroyed()) win.webContents.send(ch, ...a); if (MIRRORED.has(ch)) radial.sendSettings(ch, ...a); };
 // short banner that grows out of the pill for a few seconds
 let toastUntil = 0;
+// the volume (0-100) a notice is played at; 0 = silent (switched off, or the pill is hidden in a game)
+const soundVol = () => (store.get('sound', true) && win && !win.isDestroyed() && win.isVisible() ? Math.max(0, Math.min(100, Number(store.get('soundVol', 60)))) : 0);
 function toast(title, text, kind = 'ok', extra = {}) {
   toastUntil = Date.now() + 5000;
-  sendWin('toast', { title, text, kind, ...extra });
+  sendWin('toast', { title, text, kind, ...extra, sound: soundVol() });
 }
 
 // height of the menu bar strip (notched MacBooks have a taller one); the Mac pill is exactly that tall
+// Left edge of the pill window for a window w wide. Centre: in the middle of the screen. Right: on Windows toward the right side; on a Mac the
+// pill starts just right of the camera notch (so it sits next to the menu bar icons instead of on top of them), and the open panel grows
+// to the right from the same edge.
+const NOTCH_HALF = 105, NOTCH_GAP = 12;
+const pillLeft = (w) => {
+  const b = screen.getPrimaryDisplay().bounds;
+  if (store.get('pillPos', 'center') !== 'right') return Math.round(b.x + b.width / 2 - w / 2);
+  if (MAC) return Math.round(Math.min(b.x + b.width / 2 + NOTCH_HALF + NOTCH_GAP, b.x + b.width - w - 4));
+  return Math.round(b.x + b.width - 24 - 312 - w / 2);
+};
+function placeWindow() { if (!win || win.isDestroyed()) return; const b = win.getBounds(); win.setBounds({ x: pillLeft(b.width), y: b.y, width: b.width, height: b.height }); }
+// ---- tones (the same tunes as the page's synthesizer in renderer/app.js): [frequency Hz, start s, length s, wave]
+const TUNES = {
+  ok: [[880, 0, 0.09], [1318, 0.09, 0.16]],
+  sent: [[587, 0, 0.08], [880, 0.08, 0.08], [1175, 0.16, 0.18]],
+  received: [[1175, 0, 0.1], [880, 0.1, 0.1], [659, 0.2, 0.22]],
+  connected: [[523, 0, 0.09], [659, 0.09, 0.09], [784, 0.18, 0.09], [1047, 0.27, 0.26]],
+  err: [[330, 0, 0.14, 'triangle'], [247, 0.17, 0.26, 'triangle']],
+  shot: [[2400, 0, 0.03, 'square'], [1500, 0.035, 0.07, 'sine']],
+  impact: [[95, 0, 0.14, 'sine'], [58, 0.015, 0.2, 'sine'], [1900, 0, 0.012, 'square']],
+  start: [[196, 0, 0.7, 'triangle'], [392, 0.02, 0.14], [523, 0.14, 0.14], [659, 0.26, 0.14], [784, 0.38, 0.16], [1047, 0.52, 0.6]],
+};
+function toneFile(kind) {
+  const file = path.join(app.getPath('userData'), 'tones', kind + '.wav');
+  if (fs.existsSync(file)) return file;
+  const rate = 22050, tune = TUNES[kind] || TUNES.ok;
+  const n = Math.ceil(Math.max(...tune.map(([, at, len]) => at + len + 0.12)) * rate), mix = new Float32Array(n);
+  for (const [freq, at, len, wave] of tune) {
+    const s0 = Math.floor(at * rate), dur = len + 0.06, s1 = Math.min(n, Math.floor((at + dur) * rate));
+    for (let i = s0; i < s1; i++) {
+      const t = (i - s0) / rate, ph = 2 * Math.PI * freq * t;
+      const w = wave === 'triangle' ? (2 / Math.PI) * Math.asin(Math.sin(ph)) : wave === 'square' ? (Math.sin(ph) >= 0 ? 0.5 : -0.5) : Math.sin(ph);
+      mix[i] += w * Math.min(1, t / 0.012) * Math.pow(0.002, t / dur);
+    }
+  }
+  let peak = 0.001; for (const v of mix) peak = Math.max(peak, Math.abs(v));
+  const pcm = Buffer.alloc(44 + n * 2);
+  pcm.write('RIFF', 0); pcm.writeUInt32LE(36 + n * 2, 4); pcm.write('WAVEfmt ', 8); pcm.writeUInt32LE(16, 16); pcm.writeUInt16LE(1, 20); pcm.writeUInt16LE(1, 22);
+  pcm.writeUInt32LE(rate, 24); pcm.writeUInt32LE(rate * 2, 28); pcm.writeUInt16LE(2, 32); pcm.writeUInt16LE(16, 34); pcm.write('data', 36); pcm.writeUInt32LE(n * 2, 40);
+  for (let i = 0; i < n; i++) pcm.writeInt16LE(Math.round((mix[i] / peak) * 0.9 * 32767), 44 + i * 2);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, pcm);
+  return file;
+}
+function playToneMac(kind, vol) {
+  if (!MAC || !(vol > 0)) return;
+  try { require('child_process').execFile('/usr/bin/afplay', ['-v', String(Math.min(1, Math.pow(vol / 100, 1.3) * 1.2)), toneFile(kind)], () => {}); } catch (e) { lifecycle.line('tone failed: ' + e.message); }
+}
 const barH = () => { if (!MAC) return 34; const d = screen.getPrimaryDisplay(); return Math.max(24, d.workArea.y - d.bounds.y); };
 
 function shapeWindow(w, h) {
@@ -147,7 +198,7 @@ function shapeWindow(w, h) {
 function createWindow() {
   const { x, width } = screen.getPrimaryDisplay().bounds;
   win = new BrowserWindow({
-    x: Math.round(x + (width - (MAC ? WIN_W : WIN_FIXED.w)) / 2), y: 0, width: MAC ? WIN_W : WIN_FIXED.w, height: MAC ? barH() : WIN_FIXED.h,
+    x: pillLeft(MAC ? WIN_W : WIN_FIXED.w), y: 0, width: MAC ? WIN_W : WIN_FIXED.w, height: MAC ? barH() : WIN_FIXED.h,
     transparent: true, frame: false, resizable: false, hasShadow: false,
     alwaysOnTop: true, skipTaskbar: true, show: false, enableLargerThanScreen: true, acceptFirstMouse: true,
     icon: path.join(__dirname, 'assets', 'icon.png'),
@@ -156,9 +207,11 @@ function createWindow() {
   });
   win.setAlwaysOnTop(true, 'screen-saver');
   win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-  if (!MAC) shapeWindow(WIN_W, WIN_H);
+  if (!MAC) { shapeWindow(WIN_W, WIN_H); win.setIgnoreMouseEvents(true); } // the small pill lets clicks through (the panel takes them while open)
+  win.webContents.on('did-finish-load', () => { if (lastMedia) setTimeout(() => { try { win.webContents.send('media', lastMedia); } catch {} }, 150); });
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
   const revealAt = Date.now() + splash.play({ enabled: store.get('splash', true), pillCenterY: barH() / 2, colors: store.get('splashColors', {}) });
+  win.webContents.once('did-finish-load', () => setTimeout(() => { if (store.get('sound', true)) sendWin('chime', { kind: 'start', vol: Math.max(0, Math.min(100, Number(store.get('soundVol', 60)))) }); }, 200));
   const reveal = () => { if (win.isVisible()) return; if (revealAt > Date.now()) { setTimeout(reveal, revealAt - Date.now()); return; } win.showInactive(); if (process.platform === 'darwin') win.setPosition(win.getPosition()[0], 0); console.log('[island] window shown at', JSON.stringify(win.getBounds())); };
   win.once('ready-to-show', reveal);
   win.webContents.on('did-finish-load', () => { console.log('[island] page loaded'); setTimeout(reveal, 300); });
@@ -214,17 +267,56 @@ function setCapture(on) {
 
 // hover is polled from the cursor position so it also works while dragging files in from the OS
 let islandSize = { w: 170, h: 34 }, hoverNow = false;
+// Windows: the small pill lets clicks through to the window under it (a browser tab, for example), so the panel opens only when the pointer
+// rests on the pill for a moment, and not at all when the pointer clicks there.
+const HOVER_DWELL = 380;
+let hoverSince = 0, hoverClicked = false, hoverEnteredDown = false;
 function pollHover() {
   setInterval(() => {
-    if (!win || win.isDestroyed()) return;
+    if (!win || win.isDestroyed() || !win.isVisible()) return;
     const p = screen.getCursorScreenPoint(), b = win.getBounds();
-    const cx = screen.getPrimaryDisplay().bounds.x + screen.getPrimaryDisplay().bounds.width / 2;
-    const w = islandSize.w + 8, h = islandSize.h + 8, x0 = cx - w / 2;
+    const w = islandSize.w + 8, h = islandSize.h + 8, x0 = pillLeft(islandSize.w) - 4;
     const inside = p.x >= x0 && p.x <= x0 + w && p.y >= b.y && p.y <= b.y + h;
+    if (!inside) { hoverSince = 0; hoverClicked = false; }
+    else if (!hoverNow && !MAC) {
+      const down = native.winLeftDown();
+      if (!hoverSince) { hoverSince = Date.now(); hoverEnteredDown = down; } // a button already down on the way in = a file being dragged in
+      if (down && !hoverEnteredDown) hoverClicked = true;
+      if (hoverClicked || Date.now() - hoverSince < HOVER_DWELL) return;
+    }
     if (inside === hoverNow) return;
     hoverNow = inside;
     win.webContents.send('hover', inside);
   }, 60);
+}
+
+// the pill hides itself in games and full-screen programs (and by hand: tray menu, Ctrl+Alt+H)
+let gameHide = false, pillOff = false;
+function applyPillVisible() {
+  if (!win || win.isDestroyed()) return;
+  const hide = gameHide || pillOff;
+  if (hide && win.isVisible()) { hoverNow = false; try { win.webContents.send('hover', false); } catch {} win.hide(); }
+  else if (!hide && !win.isVisible()) win.showInactive();
+}
+let lastSwitchAt = 0;
+function watchGames() {
+  if (MAC) return;
+  let last = false, gameSeen = 0;
+  setInterval(() => {
+    const st = native.winUserState();
+    let game = store.get('gameHide', true) && (st === 2 || st === 3 || st === 4) && Date.now() - lastSwitchAt > 5000; // the edge effect of a pointer arriving is a full-screen window for a moment
+    if (game && !last && ++gameSeen < 2) return; // a game must be seen twice in a row (3 s) before the pill hides
+    if (!game) gameSeen = 0;
+    if (game === last) return;
+    last = game; gameHide = game;
+    lifecycle.line('pill ' + (game ? 'hidden: a game or full-screen program is in front (state ' + st + ')' : 'shown again'));
+    applyPillVisible();
+  }, 1500).unref();
+}
+function togglePill() {
+  pillOff = !pillOff; store.set('pillOff', pillOff);
+  lifecycle.line('pill ' + (pillOff ? 'hidden by hand' : 'shown by hand'));
+  applyPillVisible();
 }
 
 // macOS: a file dragged onto the island is recognised natively (the drag pasteboard + the mouse button), because the panel window
@@ -376,11 +468,14 @@ function pollMediaMac() {
         if (!lineText) continue;
         try {
           const p = (JSON.parse(lineText) || {}).payload || {};
+          if (p.title && mediaBlocked(p.title, p.artist || '', p.bundleIdentifier || '')) continue; // a page the user does not want as music: what shows now stays
           if (!p.title) { if (last) { last = ''; lifecycle.line('media (mac): nothing playing'); } sendWin('media', {}); continue; }
           const thumb = p.artworkData ? `data:${p.artworkMimeType || 'image/jpeg'};base64,${p.artworkData}` : '';
           const key = `${p.bundleIdentifier} ${p.playing ? 'playing' : 'paused'}: ${p.title} - ${p.artist || ''}`;
           if (key !== last) { last = key; lifecycle.line('media (mac): ' + key + (thumb ? ' (cover)' : ' (no cover yet)')); }
-          sendWin('media', { title: p.title, artist: p.artist || '', status: p.playing ? 'Playing' : 'Paused', thumb });
+          const rate = Number(p.playbackRate) || (p.playing ? 1 : 0), t0 = Date.parse(p.timestamp) || Date.now();
+          const pos = Number.isFinite(Number(p.elapsedTime)) ? Number(p.elapsedTime) + (p.playing ? Math.max(0, (Date.now() - t0) / 1000) * rate : 0) : undefined;
+          sendWin('media', { title: p.title, artist: p.artist || '', status: p.playing ? 'Playing' : 'Paused', thumb, pos: pos === undefined ? undefined : Math.round(pos * 100) / 100, end: Number(p.duration) > 0 ? Math.round(Number(p.duration) * 10) / 10 : 0 });
         } catch (e) { /* a partial line; the next one is complete */ }
       }
     });
@@ -408,19 +503,24 @@ function macMediaCommand(k) {
 
 // Windows: one long-lived PowerShell answers a poll (one line in, one JSON line out). Starting a new PowerShell every 3 seconds cost about
 // 0.4 s of CPU each time, roughly 1% of the whole computer, and none of it showed in A-tuls's own processes.
+const mediaBlockList = () => (store.get('mediaBlock', []) || []).map((x) => String(x).trim().toLowerCase()).filter(Boolean);
+const mediaBlocked = (...texts) => { const hay = texts.join(' ').toLowerCase(); return mediaBlockList().some((w) => hay.includes(w)); };
 let mediaChild = null, mediaSend = null, syncOutFn = () => {}, syncTest = () => 'no sync';
 function mediaStop() { try { if (mediaChild) mediaChild.kill(); } catch {} mediaChild = null; }
 let screenLocked = false;
+let fakeMediaUntil = 0; // development tests only (control.cmd: fakemedia)
 function pollMedia() {
   if (process.platform === 'darwin') return pollMediaMac();
   if (process.platform !== 'win32') return;
   const script = path.join(__dirname, 'media.ps1');
   let lastThumb = '', buf = '', waiting = false, timer = null, hasMedia = false, lastStatus = null;
-  const schedule = () => { clearTimeout(timer); timer = setTimeout(tick, hasMedia ? 3000 : 6000); }; // nothing playing: ask less often
+  const schedule = () => { clearTimeout(timer); timer = setTimeout(tick, lastStatus === 'Playing' ? 2000 : hasMedia ? 3000 : 6000); }; // nothing playing: ask less often
   const handle = (line) => {
     waiting = false;
+    if (Date.now() < fakeMediaUntil) return schedule(); // a test is playing a made-up song
     try {
       const info = JSON.parse(line);
+      if (info.blocked) return schedule(); // only an ignored page (Instagram, TikTok...) plays: the music that was showing stays as it is
       hasMedia = info.title !== undefined;
       if (info.status !== lastStatus) { lastStatus = info.status; lifecycle.line('media: ' + (info.title ? info.status + ' (previous track ' + (info.canPrev ? 'yes' : 'no') + ', next ' + (info.canNext ? 'yes' : 'no') + ')' : 'nothing playing')); }
       if (info.key !== undefined) lastThumb = info.thumb || '';
@@ -433,7 +533,7 @@ function pollMedia() {
   };
   const start = () => {
     buf = '';
-    mediaChild = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script, '-Loop'], { windowsHide: true, stdio: ['pipe', 'pipe', 'ignore'] });
+    mediaChild = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script, '-Loop'], { windowsHide: true, stdio: ['pipe', 'pipe', 'ignore'], env: { ...process.env, ATULS_MEDIA_BLOCK: mediaBlockList().join('|') } });
     mediaChild.stdout.setEncoding('utf8');
     mediaChild.stdout.on('data', (d) => { buf += d; let i; while ((i = buf.indexOf('\n')) >= 0) { const l = buf.slice(0, i).trim(); buf = buf.slice(i + 1); if (l) handle(l); } });
     mediaChild.stdin.on('error', () => {});
@@ -559,6 +659,7 @@ function watchAccess() {
 }
 ipcMain.on('onboard:restart', () => { lifecycle.line('onboarding: restart asked'); app.relaunch(); app.quit(); });
 ipcMain.on('onboard:open', (_e, pane) => { if (/^Privacy_(Accessibility|ListenEvent)$/.test(pane)) shell.openExternal('x-apple.systempreferences:com.apple.preference.security?' + pane); });
+let hookDownLog = 0, hookUpLog = 0, ovBtnLog = 0, hookLogUntil = 0;
 function startInput() {
   console.log('[island] checking input access');
   // macOS refuses global mouse hooks until Accessibility access is granted
@@ -576,6 +677,11 @@ function startInput() {
       lastHookAt = Date.now();
       if (k.flags & 0x10) return false; // injected by us
       if (k.flags & 0x80) return swallowedKeys.delete(k.vkCode);
+      if (link.lockedOut()) { // master mode: this keyboard is switched off, except Ctrl / Alt / Shift on their own and any key while Ctrl+Alt are held (the take-over shortcut)
+        const vk = k.vkCode;
+        if ((vk >= 0xA0 && vk <= 0xA5) || (vk >= 0x10 && vk <= 0x12) || native.winCtrlAlt()) return false;
+        swallowedKeys.add(vk); return true;
+      }
       if (link.state === 'controlling' || link.recorder) { swallowedKeys.add(k.vkCode); return true; } // recording a shortcut: the keys belong to the settings window
       return false;
     };
@@ -584,8 +690,8 @@ function startInput() {
     console.log('[island] starting input hook');
     input.start({
       move: (x, y) => { lastHookAt = Date.now(); if (!seenMove) { seenMove = true; console.log('[island] receiving mouse events'); } link.onLocalMove(x, y); },
-      down: (b, n) => { closeIfPinnedOutside(); link.onLocalButton(true, b, n); },
-      up: (b) => link.onLocalButton(false, b),
+      down: (b, n) => { if (link.state === 'controlling' || Date.now() < hookLogUntil || (hookDownLog = (hookDownLog || 0) + 1) <= 12) lifecycle.line('mouse button ' + b + ' down seen by the hook, link state ' + link.state); closeIfPinnedOutside(); link.onLocalButton(true, b, n); },
+      up: (b) => { if (link.state === 'controlling' || Date.now() < hookLogUntil || (hookUpLog = (hookUpLog || 0) + 1) <= 12) lifecycle.line('mouse button ' + b + ' up seen by the hook, link state ' + link.state); link.onLocalButton(false, b); },
       wheel: (d, r) => link.onLocalWheel(d, r),
       key: (name, down) => { link.lastHookKey = Date.now(); if (link.state === 'controlled' && (link.hookKeyLog = (link.hookKeyLog || 0) + 1) <= 8) lifecycle.line('hook saw key ' + name + (down ? ' down' : ' up') + ' while controlled'); link.onLocalKey(down, name); },
     });
@@ -845,7 +951,7 @@ let clipBusy = false;
 function startClipboardSync() {
   setInterval(async () => {
     // the watcher also runs without a link (or with sharing off) while screenshots are being saved to a folder
-    if (clipBusy || (!(clipOn() && link.sock) && !shotOn())) return;
+    if (clipBusy || (!(clipOn() && link.sock) && !shotOn() && !(link.shotUntil > Date.now()))) return;
     clipBusy = true;
     try {
       const c = await readClip();
@@ -853,7 +959,7 @@ function startClipboardSync() {
       lastClip = c.hash;
       if (c.kind === 'image' && c.data.length > 30 * 1024 * 1024) return;
       const shot = c.kind === 'image' && link.shotUntil > Date.now(); // a screenshot just taken on this computer
-      if (shot) saveShot(Buffer.from(c.data, 'base64'), 'taken here');
+      if (shot) { if (shotOn()) saveShot(Buffer.from(c.data, 'base64'), 'taken here'); else toast('Screenshot taken', 'It is in your clipboard', 'ok'); } // always a notice, saved to a folder or not
       if (!clipOn() || !link.sock) return;
       console.log('[island] clipboard ->', c.kind);
       link.send({ t: 'clip', kind: c.kind, text: c.text, data: c.kind === 'image' ? c.data : undefined, shot });
@@ -1055,6 +1161,7 @@ async function calibrate() {
       store.set('gazeCal', { ...gazeCals(), [peerId]: r.cal }); gazeMsg = 'Calibrated';
       gazeTestUntil = Date.now() + 2 * 60 * 1000; // the next successful head-turn switch is the test
       toast('Calibration saved', 'Now look at ' + peerName + ' to try it', 'ok');
+      try { link.onCalibrated(); } catch {}
       link.send({ t: 'notice', title: 'Calibration saved', text: 'Look at this screen to try Look to switch', kind: 'ok' });
     } else {
       gazeMsg = 'Calibration failed: ' + r.error;
@@ -1115,7 +1222,8 @@ function createTray() {
   tray = new Tray(trayImg);
   tray.setToolTip('A-tuls');
   tray.setContextMenu(Menu.buildFromTemplate([
-    { label: 'Show island', click: () => win.showInactive() },
+    { label: 'Hide / show the pill (Ctrl+Alt+H)', click: () => togglePill() },
+    { label: 'Show island', click: () => { pillOff = false; store.set('pillOff', false); gameHide = false; win.showInactive(); } },
     { label: 'Quit', click: () => app.quit() },
   ]));
 }
@@ -1153,9 +1261,17 @@ app.whenReady().then(() => {
   link.on('transfer', (t) => {
     sendWin('transfer', t);
     // a banner under the pill when a file has arrived or gone out, like the one for a new connection
-    if (t.done) toast(t.dir === 'in' ? 'File received' : 'File sent', (t.name || 'file') + (link.peerName ? (t.dir === 'in' ? ' from ' : ' to ') + link.peerName : ''), 'ok');
+    if (t.done) toast(t.dir === 'in' ? 'File received' : 'Sent', (t.name || 'file') + (link.peerName ? (t.dir === 'in' ? ' from ' : ' to ') + link.peerName : ''), 'ok', { icon: t.dir === 'in' ? 'received' : 'sent' });
   });
   link.on('error', (m) => console.error('link:', m));
+  // master mode: a Mac that is not the master swallows its real mouse and keyboard (Windows does it inside its hooks)
+  link.on('master', (mm) => { if (lastMedia) sendWin('media', lastMedia); lifecycle.line('master: ' + (mm.on ? (mm.mine ? 'this computer' : 'the other computer') : 'off')); toast(mm.on ? (mm.mine ? 'This computer is the master' : 'The other computer is the master') : 'Master mode is off', mm.on ? (mm.mine ? 'The other computer ignores its own mouse and keyboard' : 'This computer follows its mouse and keyboard (Ctrl+Alt+M to take over)') : 'Both computers use their own mouse and keyboard', 'ok'); });
+  if (MAC) setInterval(() => { try { native.setPhysicalBlock(link.lockedOut()); if (link.lockedOut()) native.reassertMouseFree(); } catch {} }, 400).unref();
+  // Mac: while this Mac controls the other computer the buttons are also read straight from the hardware state, 60 times a second. The system-wide
+  // hook and the overlay did not report clicks in this situation; a click that arrives another way too is dropped in onLocalButton.
+  if (MAC) { const held = [false, false]; setInterval(() => { try { if (link.state !== 'controlling') { held[0] = held[1] = false; return; } [0, 1].forEach((b) => { const d = native.macMouse.buttonHeld(b); if (d !== held[b]) { held[b] = d; if (d || true) { lifecycle.line('mouse button ' + (b + 1) + (d ? ' down' : ' up') + ' read from the hardware state'); link.onLocalButton(d, b + 1, 1); } } }); } catch {} }, 16).unref(); }
+  else { setInterval(() => { try { link.checkStuckButtons(); } catch {} }, 1000).unref(); app.on('will-quit', () => { try { link.releaseInjectedButtons(); } catch {} }); }
+  ipcMain.handle('master:set', (_e, on, who) => { link.setMaster(!!on, who === 'peer' ? (link.peer && link.peer.id) : link.id); return link.status().master; });
   link.on('clip', applyRemoteClip);
   link.on('notice', (n) => { lifecycle.line('notice: ' + n.title + (n.text ? ' - ' + n.text : '')); toast(n.title, n.text, n.kind, { ready: n.ready, hold: n.hold, step: n.step, of: n.of, glyph: n.glyph }); });
   let wasLinked = false;
@@ -1187,7 +1303,10 @@ app.whenReady().then(() => {
     else edgeIdle = setTimeout(() => edgefx.destroy(), 30000);
   });
   // only the screen that becomes the active one gets the effect (the pointer arrived, or came back to this computer)
+  let lastImpact = 0;
   link.on('switch', (s) => {
+    lastSwitchAt = Date.now();
+    if (Date.now() - lastImpact > 250) { lastImpact = Date.now(); const v = soundVol(); if (v) sendWin('chime', { kind: 'impact', vol: v }); } // a small thud when the pointer arrives on this screen
     if (!store.get('edgeFx', true)) return;
     lifecycle.line(`edge effect: screen active, pointer from the ${s.edge || 'nearest'} edge`);
     setTimeout(() => edgefx.play({ kind: 'enter', edge: s.edge }), 70); // after the pointer has been placed
@@ -1253,6 +1372,9 @@ app.whenReady().then(() => {
   const { globalShortcut } = require('electron');
   // emergency exit: everything goes back to this computer (cursor shown, buttons and keys released, control released)
   try { globalShortcut.register('CommandOrControl+Alt+Shift+Escape', () => { console.log('[island] panic shortcut'); try { if (pickFinish) pickFinish(null); radial.close(); link.panic(); native.setCursorHidden(false); native.macMouse.hideCursor(false); toast('Control returned', 'Everything is back on this computer', 'ok'); } catch (e) { console.error('[island] panic failed:', e.message); } }); } catch (e) { console.error('[island] panic shortcut failed:', e.message); }
+  try { globalShortcut.register('CommandOrControl+Alt+H', togglePill); } catch {}
+  try { globalShortcut.register('Control+Alt+M', () => { if (link.sock) link.setMaster(true, link.id); }); } catch {}
+  pillOff = !!store.get('pillOff', false); watchGames(); if (pillOff) setTimeout(applyPillVisible, 3000);
   const sc = 'CommandOrControl+Alt+P';
   try { console.log('[island] shortcut', sc, globalShortcut.register(sc, () => { console.log('[island] shortcut pressed'); pickColor(); }) ? 'registered' : 'NOT registered (taken by another app)'); } catch (e) { console.error('[island] shortcut failed:', e.message); }
   app.on('will-quit', () => { try { globalShortcut.unregisterAll(); } catch {} });
@@ -1273,6 +1395,7 @@ app.whenReady().then(() => {
     store.set('scrollReverse', link.scrollSettings.reverse);
     lifecycle.line(`settings: scroll speed ${Math.round(link.scrollSettings.speed * 100)}%, reverse ${link.scrollSettings.reverse}`);
   });
+  ipcMain.on('ov-btn', (_e, down, domBtn, n) => { const b = [1, 3, 2, 4, 5][domBtn]; if (b && link.state === 'controlling') { if (down) lifecycle.line('mouse button ' + b + ' down seen by the overlay'); link.onLocalButton(!!down, b, n || 1); } });
   ipcMain.on('ov-move', (_e, dx, dy) => link.onRelMove(dx, dy));
   link.on('lockfail', () => { console.log('[island] pointer lock gave no movement, using cursor tracking instead'); overlay.webContents.executeJavaScript('document.exitPointerLock && document.exitPointerLock()', true).catch(() => {}); });
   ipcMain.on('ov-lock', (_e, v) => { if (v) { link.relMoves = 0; link.hookMovesLocked = 0; link.relIgnoreUntil = Date.now() + 600; } link.locked = !!v; console.log('[island] pointer lock', v ? 'on' : 'off'); });
@@ -1295,6 +1418,26 @@ app.whenReady().then(() => {
       else if (c === 'perf:shotui') { (async () => { const w = new BrowserWindow({ show: false, width: 940, height: 680, webPreferences: { preload: path.join(__dirname, 'settings-preload.js'), contextIsolation: true, sandbox: false } }); await w.loadFile(path.join(__dirname, 'settings.html')); await new Promise((r) => setTimeout(r, 2000)); const r = await w.webContents.executeJavaScript("(async () => { const out = []; const sleep = (ms) => new Promise((r) => setTimeout(r, ms)); try { document.querySelector('aside button[data-p=sharing]').click(); await sleep(500); const num = document.querySelector('#main input[type=number]'); out.push('number input: ' + (num ? 'found value=' + num.value + ' disabled=' + num.disabled + ' readonly=' + num.readOnly : 'MISSING')); const sel = Array.from(document.querySelectorAll('#main select')).find((x) => Array.from(x.options).some((o) => o.value === 'jpg')); out.push('format select: ' + (sel ? 'found value=' + sel.value + ' disabled=' + sel.disabled : 'MISSING')); const state0 = await window.api.shotGet(); if (num) { num.value = '640'; num.dispatchEvent(new Event('change', { bubbles: true })); await sleep(800); } const s1 = await window.api.shotGet(); out.push('after typing 640 + change: backend limit=' + s1.limitMb); const num2 = document.querySelector('#main input[type=number]'); out.push('after redraw the field shows ' + (num2 && num2.value)); if (sel) { sel.value = 'jpg'; sel.dispatchEvent(new Event('change', { bubbles: true })); await sleep(800); } const s2 = await window.api.shotGet(); out.push('after choosing jpg: backend format=' + s2.format); await window.api.shotSet({ limitMb: state0.limitMb, format: state0.format }); } catch (e) { out.push('ERROR ' + e.message); } return out.join(' | '); })()"); lifecycle.line('shot ui probe: ' + r); w.destroy(); })().catch((e) => lifecycle.line('shot ui probe failed: ' + e.message)); }
       else if (c.startsWith('sync:')) { const [, k, v] = c.split(':'); lifecycle.line('test: ' + syncTest(k, v)); }
       else if (c === 'perf:shottype') { (async () => { const w = new BrowserWindow({ show: true, x: -3000, y: -3000, width: 940, height: 680, focusable: true, webPreferences: { preload: path.join(__dirname, 'settings-preload.js'), contextIsolation: true, sandbox: false } }); await w.loadFile(path.join(__dirname, 'settings.html')); await new Promise((r) => setTimeout(r, 2000)); const js = (t) => w.webContents.executeJavaScript(t); await js("document.querySelector('aside button[data-p=sharing]').click()"); await new Promise((r) => setTimeout(r, 600)); const before = await js("(() => { const n = document.querySelector('#main input[type=number]'); n.focus(); n.select(); return n.value + ' focused=' + (document.activeElement === n); })()"); w.webContents.focus(); await w.webContents.insertText('1000'); await new Promise((r) => setTimeout(r, 300)); const typed = await js("document.querySelector('#main input[type=number]').value"); w.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Enter' }); w.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Enter' }); await js("document.querySelector('#main input[type=number]').blur()"); await new Promise((r) => setTimeout(r, 900)); const after = await js("(async () => { const st = await window.api.shotGet(); const n = document.querySelector('#main input[type=number]'); return 'backend=' + st.limitMb + ' field=' + (n && n.value); })()"); lifecycle.line('shot typing probe: before ' + before + ' | after typing field=' + typed + ' | after Enter/blur: ' + after); await js("window.api.shotSet({ limitMb: 500 })"); w.destroy(); })().catch((e) => lifecycle.line('shot typing probe failed: ' + e.message)); }
+      else if (c.startsWith('caltest:')) { require('./calendar').add('Test', c.slice(8)).then((r) => lifecycle.line('caltest: ' + JSON.stringify(r))); }
+      else if (c.startsWith('fakemedia:')) { const [title, artist, pos, end, status] = c.slice(10).split('|'); fakeMediaUntil = Date.now() + 120000; sendWin('media', { title, artist, status: status || 'Playing', canPrev: true, canNext: true, pos: Number(pos) || 0, end: Number(end) || 0, thumb: '' }); lifecycle.line('test: made-up media ' + title); }
+      else if (c.startsWith('faketransfer:')) { const [name, mb] = c.slice(13).split('|'); const size = (Number(mb) || 12) * 1048576; let p = 0; sendWin('transfer', { dir: 'out', name, pct: 0, size }); const iv = setInterval(() => { p += 8; if (p >= 100) { clearInterval(iv); sendWin('transfer', { dir: 'out', name, pct: 100, done: true, size }); toast('Sent', name + ' to test', 'ok', { icon: 'sent' }); } else sendWin('transfer', { dir: 'out', name, pct: p, size }); }, 600); }
+      else if (c === 'fakemedia-off') { fakeMediaUntil = 0; sendWin('media', {}); }
+      else if (c.startsWith('island:js:')) { if (win) win.webContents.executeJavaScript(c.slice(10)).catch(() => {}); }
+      else if (c.startsWith('island:eval:')) { if (win) win.webContents.executeJavaScript(c.slice(12)).then((r) => lifecycle.line('eval: ' + JSON.stringify(r))).catch((e) => lifecycle.line('eval failed: ' + e.message)); }
+      else if (c === 'enterpeer') lifecycle.line('test: enter peer -> ' + link.gazeEnter());
+      else if (c === 'leavepeer') lifecycle.line('test: leave peer -> ' + link.gazeLeave());
+      else if (c === 'ovclick') { if (overlay && !overlay.isDestroyed()) { for (const t of ['mouseDown', 'mouseUp']) overlay.webContents.sendInputEvent({ type: t, x: 200, y: 200, button: 'left', clickCount: 1 }); lifecycle.line('test: synthetic click sent to the overlay (link state ' + link.state + ')'); } else lifecycle.line('test: no overlay'); }
+      else if (c === 'assoctest') { hookLogUntil = Date.now() + 16000; lifecycle.line('test: mouse disconnected from the cursor for 14 s: ' + native.macAssociate(false)); setTimeout(() => lifecycle.line('test: mouse connected again: ' + native.macAssociate(true)), 14000); }
+      else if (c === 'layoutdump') lifecycle.line('test: layout ' + JSON.stringify(link.layoutState()));
+      else if (c === 'cursorpos') lifecycle.line('test: cursor at ' + JSON.stringify(screen.getCursorScreenPoint()));
+      else if (c.startsWith('setpos:')) { const [x, y] = c.slice(7).split(',').map(Number); input.setPos(x, y); setTimeout(() => lifecycle.line('test: cursor after setpos ' + JSON.stringify(screen.getCursorScreenPoint())), 200); }
+      else if (c === 'calibrated') link.onCalibrated();
+      else if (c === 'master:auto') link.adoptMaster({ on: true, id: '', auto: true, calMaster: false, at: 0 });
+      else if (c === 'master:me') link.setMaster(true, link.id);
+      else if (c === 'master:peer') link.setMaster(true, link.peer && link.peer.id);
+      else if (c === 'master:off') link.setMaster(false);
+      else if (c === 'island:shot') { if (win) win.webContents.capturePage().then((img) => { fs.writeFileSync(path.join(app.getPath('userData'), 'island-shot.png'), img.toPNG()); lifecycle.line('test: island picture saved'); }).catch((e) => lifecycle.line('island shot failed: ' + e.message)); }
+      else if (c === 'island:open' || c === 'island:close') { if (win) win.webContents.send('hover', c === 'island:open'); }
       else if (c === 'gazetest:done') finishGazeTest(true);
       else if (c.startsWith('hang:')) { const ms = Number(c.slice(5)) || 20000; lifecycle.line('test: freezing the main thread for ' + ms + ' ms'); const end = Date.now() + ms; while (Date.now() < end) { /* frozen on purpose */ } }
       else if (c === 'perf:pointerorder') { (async () => { const w = new BrowserWindow({ show: false, width: 940, height: 680, webPreferences: { preload: path.join(__dirname, 'settings-preload.js'), contextIsolation: true, sandbox: false } }); await w.loadFile(path.join(__dirname, 'settings.html')); await new Promise((r) => setTimeout(r, 2000)); const r = await w.webContents.executeJavaScript("(async () => { document.querySelector('aside button[data-p=pointer]').click(); await new Promise((r) => setTimeout(r, 400)); return Array.from(document.querySelectorAll('#main .row .t b, #main .group')).map((e) => e.innerText).join(' | '); })()"); lifecycle.line('pointer page order: ' + r); w.destroy(); })().catch((e) => lifecycle.line('order probe failed: ' + e.message)); }
@@ -1332,7 +1475,7 @@ app.whenReady().then(() => {
   ipcMain.handle('log:open', () => { shell.showItemInFolder(lifecycle.file); });
   // start with the computer (the installed app; a development run never registers itself)
   if (app.isPackaged && !store.get('startupInit', false)) { try { app.setLoginItemSettings({ openAtLogin: true }); } catch {} store.set('startupInit', true); lifecycle.line('start with the computer: switched on (first run)'); }
-  const startupState = () => ({ packaged: app.isPackaged, openAtLogin: !!app.getLoginItemSettings().openAtLogin, splash: store.get('splash', true), splashColors: store.get('splashColors', {}), edgeFx: store.get('edgeFx', true), version: app.getVersion() });
+  const startupState = () => ({ lyrics: store.get('lyrics', true), packaged: app.isPackaged, openAtLogin: !!app.getLoginItemSettings().openAtLogin, splash: store.get('splash', true), splashColors: store.get('splashColors', {}), edgeFx: store.get('edgeFx', true), version: app.getVersion(), sound: store.get('sound', true), soundVol: store.get('soundVol', 60), gameHide: store.get('gameHide', true), pillOff: !!store.get('pillOff', false) });
   // the animation colours: stamped with the time, kept here and sent to the other computer, which keeps the newer ones
   const setSplashColors = (c1, c2) => {
     const ok = (v) => (/^#[0-9a-f]{6}$/i.test(v || '') ? v.toLowerCase() : '');
@@ -1345,10 +1488,16 @@ app.whenReady().then(() => {
     if (o && typeof o.openAtLogin === 'boolean' && app.isPackaged) { try { app.setLoginItemSettings({ openAtLogin: o.openAtLogin }); } catch (e) { console.error('[island] login item failed:', e.message); } lifecycle.line('settings: start with the computer ' + o.openAtLogin); }
     if (o && typeof o.splash === 'boolean') { store.set('splash', o.splash); syncOutFn(['splash']); lifecycle.line('settings: start-up animation ' + o.splash); }
     if (o && o.splashColors && typeof o.splashColors === 'object') setSplashColors(o.splashColors.c1, o.splashColors.c2);
+    if (o && typeof o.gameHide === 'boolean') { store.set('gameHide', o.gameHide); lifecycle.line('settings: hide in games ' + o.gameHide); if (!o.gameHide) { gameHide = false; applyPillVisible(); } }
+    if (o && typeof o.pillOff === 'boolean' && o.pillOff !== pillOff) togglePill();
+    if (o && typeof o.sound === 'boolean') { store.set('sound', o.sound); lifecycle.line('settings: notification sounds ' + o.sound); }
+    if (o && Number.isFinite(Number(o.soundVol)) && o.soundVol !== undefined) store.set('soundVol', Math.max(0, Math.min(100, Math.round(Number(o.soundVol)))));
+    if (o && typeof o.lyrics === 'boolean') { store.set('lyrics', o.lyrics); lifecycle.line('settings: lyrics in the pill ' + o.lyrics); }
     if (o && typeof o.edgeFx === 'boolean') { store.set('edgeFx', o.edgeFx); syncOutFn(['edgeFx']); lifecycle.line('settings: screen-edge effect ' + o.edgeFx); }
     return startupState();
   });
-  ipcMain.handle('splash:test', () => { splash.play({ enabled: true, pillCenterY: barH() / 2, colors: store.get('splashColors', {}) }); });
+  ipcMain.handle('sound:test', (_e, kind) => { sendWin('chime', { kind: String(kind || 'ok'), vol: Math.max(0, Math.min(100, Number(store.get('soundVol', 60)))) }); });
+  ipcMain.handle('splash:test', () => { sendWin('chime', { kind: 'start', vol: store.get('sound', true) ? Math.max(0, Math.min(100, Number(store.get('soundVol', 60)))) : 0 }); splash.play({ enabled: true, pillCenterY: barH() / 2, colors: store.get('splashColors', {}) }); });
   const colorOk = (v) => (/^#[0-9a-f]{6}$/i.test(v || '') ? v.toLowerCase() : '');
   // Settings that mean the same on both computers follow each other: a change made on one is sent to the other (the newer change wins, by time),
   // and when the link comes up both send what they have. Things that belong to one computer (folders, applications, mouse buttons, keyboard
@@ -1396,14 +1545,14 @@ app.whenReady().then(() => {
   });
   link.on('layout', () => { const c = store.get('splashColors', null); if (c && (c.c1 || c.c2)) link.send({ t: 'fxcolors', colors: { ...c, t: c.t || 1 } }); });
   ipcMain.on('keep-open', (_e, v) => { keepOpen = !!v; });
-  ipcMain.on('island-size', (_e, w, h) => { islandSize = { w, h }; });
+  ipcMain.on('island-size', (_e, w, h) => { islandSize = { w, h }; if (!MAC && win && !win.isDestroyed()) win.setIgnoreMouseEvents(h <= 40); });
   ipcMain.on('window-size', (_e, w, h) => {
     if (!MAC) { shapeWindow(w, h); return; }
     const d = screen.getPrimaryDisplay().bounds;
-    win.setBounds({ x: Math.round(d.x + (d.width - w) / 2), y: d.y, width: w, height: h });
+    win.setBounds({ x: pillLeft(w), y: d.y, width: w, height: h });
     if (MAC) console.log('[island] window now', JSON.stringify(win.getBounds()), 'wanted', w, h);
   });
-  ipcMain.handle('metrics', () => ({ bar: barH(), notch: MAC && barH() >= 30 }));
+  ipcMain.handle('metrics', () => ({ bar: barH(), notch: MAC && barH() >= 30, pos: store.get('pillPos', 'center') }));
   ipcMain.handle('layout:get', () => link.layoutState());
   ipcMain.handle('layout:set', (_e, id, x, y) => link.setOffset(id, x, y));
   ipcMain.handle('link:set-side', (_e, side) => { lifecycle.line('ui: other computer placed ' + side); return link.setSide(side); });
@@ -1424,6 +1573,97 @@ app.whenReady().then(() => {
   ipcMain.handle('perm:get', () => permOk);
   const updater = require('./updater');
   updater.init((st) => { sendWin('update', st); if (st.status === 'available') toast('Update available', 'Version ' + st.latest + ' - open Settings > General', 'ok'); if (st.status === 'ready') toast('Update ready', 'Restart A-tuls to finish', 'ok'); }, (m) => lifecycle.line(m));
+  // lyrics (pill) and calendars (home page)
+  const lyrics = require('./lyrics'); lyrics.init(app.getPath('userData'), app.getVersion());
+  const calendar = require('./calendar');
+  calendar.init(protectedStore(store), app.getPath('userData'), () => sendWin('cal', calendar.sources()));
+  ipcMain.handle('lyrics:get', (_e, q) => (store.get('lyrics', true) && q && q.title ? lyrics.lookup({ title: String(q.title), artist: String(q.artist || ''), duration: Number(q.duration) || 0 }).catch(() => null) : null));
+  ipcMain.handle('cal:range', (_e, from, to) => calendar.range(Number(from) || 0, Number(to) || 0));
+  ipcMain.handle('cal:sources', () => calendar.sources());
+  ipcMain.handle('cal:add', async (_e, name, url) => { const r = await calendar.add(name, url); lifecycle.line('calendar: add ' + (r.ok ? 'ok' : 'failed - ' + r.error)); return r; });
+  ipcMain.handle('cal:remove', (_e, id) => { lifecycle.line('calendar: removed one'); calendar.remove(id); return calendar.sources(); });
+  ipcMain.handle('cal:refresh', async () => { await calendar.refresh(); return calendar.sources(); });
+  // the picture in the top corner of the home page (the user's own, else the A-tuls logo) and the colour of its decorations
+  const profileFile = () => path.join(app.getPath('userData'), 'profile.png');
+  const lookState = () => {
+    let profile = '';
+    try { profile = 'data:image/png;base64,' + fs.readFileSync(profileFile()).toString('base64'); } catch {}
+    return { accent: colorOk(store.get('accent', '')) || '#0a84ff', profile, pillPos: store.get('pillPos', 'center') };
+  };
+  ipcMain.handle('mediablock:get', () => mediaBlockList());
+  ipcMain.handle('mediablock:set', (_e, list) => {
+    const clean = [...new Set((Array.isArray(list) ? list : []).map((x) => String(x).trim().toLowerCase().slice(0, 60)).filter(Boolean))].slice(0, 30);
+    store.set('mediaBlock', clean); lifecycle.line('settings: media ignored from ' + JSON.stringify(clean));
+    mediaStop(); // the Windows helper is started again with the new list
+    return clean;
+  });
+  ipcMain.handle('look:get', lookState);
+  ipcMain.handle('look:pos', (_e, v) => { store.set('pillPos', v === 'right' ? 'right' : 'center'); lifecycle.line('settings: pill position ' + store.get('pillPos')); placeWindow(); sendWin('look', lookState()); return lookState(); });
+  ipcMain.handle('look:accent', (_e, v) => { store.set('accent', colorOk(v)); lifecycle.line('settings: decoration colour ' + store.get('accent')); sendWin('look', lookState()); return lookState(); });
+  ipcMain.handle('profile:choose', async () => {
+    const r = await dialog.showOpenDialog({ title: 'Choose your picture', properties: ['openFile'], filters: [{ name: 'Pictures', extensions: ['png', 'jpg', 'jpeg', 'webp', 'bmp', 'gif'] }] });
+    if (r.canceled || !r.filePaths[0]) return lookState();
+    try {
+      const img = nativeImage.createFromPath(r.filePaths[0]);
+      const { width: w, height: h } = img.getSize();
+      if (!w || !h) throw new Error('not a picture');
+      const s = Math.min(w, h);
+      fs.writeFileSync(profileFile(), img.crop({ x: Math.floor((w - s) / 2), y: Math.floor((h - s) / 2), width: s, height: s }).resize({ width: 160, height: 160, quality: 'best' }).toPNG());
+      lifecycle.line('settings: own picture set');
+    } catch (e) { lifecycle.line('settings: picture failed - ' + e.message); }
+    sendWin('look', lookState());
+    return lookState();
+  });
+  ipcMain.handle('profile:reset', () => { try { fs.unlinkSync(profileFile()); } catch {} lifecycle.line('settings: own picture removed'); sendWin('look', lookState()); return lookState(); });
+  // volume mixer (Windows): one helper PowerShell, started when the mixer is first used and ended after 3 idle minutes
+  let mixChild = null, mixBuf = '', mixJobs = [], mixIdle = null;
+  const mixerStop = () => {
+    try { if (mixChild) mixChild.kill(); } catch {}
+    mixChild = null; mixBuf = '';
+    mixJobs.splice(0).forEach((j) => { clearTimeout(j.timer); j.resolve({ error: 'stopped' }); });
+  };
+  const mixerStart = () => {
+    mixChild = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', path.join(__dirname, 'mixer.ps1')], { windowsHide: true, stdio: ['pipe', 'pipe', 'ignore'] });
+    mixChild.stdout.setEncoding('utf8');
+    mixChild.stdout.on('data', (d) => {
+      mixBuf += d; let i;
+      while ((i = mixBuf.indexOf('\n')) >= 0) {
+        const l = mixBuf.slice(0, i).trim(); mixBuf = mixBuf.slice(i + 1);
+        if (!l) continue;
+        let o; try { o = JSON.parse(l); } catch { continue; }
+        if (o.ready) continue;
+        const j = mixJobs.shift(); if (j) { clearTimeout(j.timer); j.resolve(o); }
+      }
+    });
+    mixChild.stdin.on('error', () => {});
+    mixChild.on('close', () => { mixChild = null; mixJobs.splice(0).forEach((j) => { clearTimeout(j.timer); j.resolve({ error: 'stopped' }); }); });
+    mixChild.on('error', (e) => { lifecycle.line('mixer helper failed: ' + e.message); mixChild = null; });
+  };
+  const macVolume = (cmd) => new Promise((resolve) => {
+    const { execFile } = require('child_process');
+    const num = (s, k) => { const m = new RegExp(k + ':(\\d+)').exec(s); return m ? Math.min(100, Number(m[1])) : 0; };
+    const read = () => execFile('/usr/bin/osascript', ['-e', 'get volume settings'], { timeout: 4000 }, (err, out) => resolve(err ? { error: 'no answer' } : { master: num(out, 'output volume'), input: num(out, 'input volume'), alert: num(out, 'alert volume'), apps: [] }));
+    const m = /^(master|input|alert) (\d+)/.exec(cmd);
+    if (m) execFile('/usr/bin/osascript', ['-e', 'set volume ' + (m[1] === 'master' ? 'output' : m[1] === 'input' ? 'input' : 'alert') + ' volume ' + Math.min(100, Number(m[2]))], { timeout: 4000 }, read); else read();
+  });
+  const mixerAsk = (cmd) => new Promise((resolve) => {
+    if (process.platform === 'darwin') return macVolume(cmd).then(resolve);
+    if (process.platform !== 'win32') return resolve({ unsupported: true });
+    clearTimeout(mixIdle); mixIdle = setTimeout(mixerStop, 180000); mixIdle.unref();
+    if (!mixChild) mixerStart();
+    const job = { resolve, timer: setTimeout(() => { const i = mixJobs.indexOf(job); if (i >= 0) mixJobs.splice(i, 1); resolve({ error: 'no answer' }); mixerStop(); }, 20000) };
+    mixJobs.push(job);
+    try { mixChild.stdin.write(cmd.replace(/[\r\n]/g, ' ') + '\n'); } catch { mixJobs.pop(); clearTimeout(job.timer); resolve({ error: 'failed' }); }
+  });
+  const pct = (v) => Math.max(0, Math.min(100, Math.round(Number(v) || 0)));
+  ipcMain.handle('mixer:list', () => mixerAsk('list'));
+  ipcMain.handle('mixer:set', (_e, name, v) => mixerAsk('set ' + pct(v) + ' ' + String(name).slice(0, 80)));
+  ipcMain.handle('mixer:mute', (_e, name, m) => mixerAsk('mute ' + (m ? 1 : 0) + ' ' + String(name).slice(0, 80)));
+  ipcMain.handle('mixer:mac', (_e, kind, v) => mixerAsk((kind === 'input' || kind === 'alert' ? kind : 'master') + ' ' + pct(v)));
+  // Mac: the notification tones are played by macOS itself (afplay) from small sound files made here, so they do not depend on the web page's audio
+  ipcMain.handle('sound:play', (_e, kind, vol) => playToneMac(String(kind || 'ok'), Number(vol) || 0));
+  ipcMain.handle('mixer:master', (_e, v) => mixerAsk(v === undefined ? 'list' : 'master ' + pct(v)));
+  app.on('before-quit', mixerStop);
   ipcMain.handle('update:get', () => updater.state);
   ipcMain.handle('update:check', () => updater.check());
   ipcMain.handle('update:install', () => updater.install());
@@ -1472,12 +1712,22 @@ app.whenReady().then(() => {
     try { e.sender.startDrag({ file: p, icon: dragIcon }); } catch (err) { console.error('drag-out:', err.message); }
   });
   const keys = { play: Key.AudioPlay, next: Key.AudioNext, prev: Key.AudioPrev };
-  ipcMain.on('media-key', (_e, k) => {
-    lifecycle.line('media key ' + k);
+  const runMediaKey = (k) => {
     if (MAC) { macMediaCommand(k); return; }
     if (['play', 'next', 'prev'].includes(k) && mediaSend && mediaSend(k)) return; // direct and instant
     keys[k] && keyboard.type(keys[k]).catch(() => {}); // fallback: a media key press
+  };
+  ipcMain.on('media-key', (_e, k) => {
+    lifecycle.line('media key ' + k + (link.followsMaster() ? ' (sent to the master)' : ''));
+    if (link.followsMaster()) { link.send({ t: 'mediakey', k }); return; } // the music on this screen is the master's: its player is the one to drive
+    runMediaKey(k);
   });
+  // master mode: what the master's Home page holds goes to the other computer, whose edits and buttons come back
+  ipcMain.on('home:push', (_e, payload) => { if (link.iAmMaster() && payload) link.send({ t: 'home', ...payload }); });
+  ipcMain.on('home:todo', (_e, todos) => { if (link.followsMaster() && Array.isArray(todos)) link.send({ t: 'todo', todos: todos.slice(0, 100) }); });
+  link.on('home', (m) => sendWin('home', m));
+  link.on('todo', (t) => sendWin('todo', t));
+  link.on('mediakey', (k) => { if (['play', 'next', 'prev'].includes(k)) { lifecycle.line('media key ' + k + ' (from the other computer)'); runMediaKey(k); } });
 
   createTray();
 });
@@ -1504,7 +1754,7 @@ async function selfTest() {
     w.destroy();
   } catch (e) { L('settings window FAILED: ' + e.message); }
   try {
-    const ids = ['island', 'panel', 'tab-media', 'tab-tray', 'tab-link', 'gear', 'home', 'nook-pick', 'nook-cal', 'peer-side', 'nearby', 'files', 'send'];
+    const ids = ['island', 'panel', 'tab-media', 'tab-tray', 'tab-link', 'gear', 'avatar', 'top-mixer', 'lyr-list', 'todo-list', 'cal-week', 'dots', 'peer-side', 'nearby', 'files', 'send'];
     const missing = await win.webContents.executeJavaScript(`${JSON.stringify(ids)}.filter((i) => !document.getElementById(i))`);
     L(missing.length ? 'island page missing elements: ' + missing.join(', ') : 'island page: all key elements present');
   } catch (e) { L('island page check FAILED: ' + e.message); }

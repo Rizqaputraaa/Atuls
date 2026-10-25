@@ -20,6 +20,7 @@
     "@mediapipe/tasks-vision": "^1.1.1",
     "@nut-tree-fork/nut-js": "^4.2.6",
     "electron-updater": "^6.8.9",
+    "ical.js": "^2.2.1",
     "koffi": "^2.16.3",
     "uiohook-napi": "^1.5.5",
     "ws": "^8.22.0"

@@ -119,11 +119,22 @@ function releaseAll() {
   heldKeys.clear(); heldMods.clear();
 }
 // Region screenshot straight to the clipboard on macOS (Cmd+Ctrl+Shift+4); the clipboard sync brings it back
-function screenshot() {
+const pause = (ms) => new Promise((r) => setTimeout(r, ms));
+async function screenshot() {
   releaseAll();
   try {
     if (process.platform === 'darwin') uIOhook.keyTap(UiohookKey['4'], [UiohookKey.Meta, UiohookKey.Ctrl, UiohookKey.Shift]);
-    else uIOhook.keyTap(UiohookKey.S, [UiohookKey.Meta, UiohookKey.Shift]); // Windows snipping
+    else {
+      // Windows snipping (Win+Shift+S). A key tap with no pause between the keys makes the overlay close again at once on current Windows builds,
+      // so the keys are pressed and let go one after the other, like a hand does it.
+      const K = UiohookKey;
+      uIOhook.keyToggle(K.Meta, 'down'); await pause(60);
+      uIOhook.keyToggle(K.Shift, 'down'); await pause(60);
+      uIOhook.keyToggle(K.S, 'down'); await pause(120);
+      uIOhook.keyToggle(K.S, 'up'); await pause(150);
+      uIOhook.keyToggle(K.Shift, 'up'); await pause(40);
+      uIOhook.keyToggle(K.Meta, 'up');
+    }
   } catch (e) { console.error('[island] screenshot key failed:', e.message); }
 }
 // after a capture on Windows the blocked key-ups never reached the OS, so let go of the common modifiers

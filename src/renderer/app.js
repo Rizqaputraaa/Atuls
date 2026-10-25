@@ -3,30 +3,37 @@ const ui = (m) => { try { api.log(m); } catch {} }; // one line in the run log f
 const $ = (s) => document.querySelector(s);
 const island = $('#island');
 let closeTimer, playing = false, toastTimer = null, toastOn = false;
+let pillRight = false;
+let lastOH = 410, ohTimer = null, macExtra = 0; // height of the open panel (it follows the page)
+let mixerOpen = false, mixTimer = null, mixDrag = 0, mixSyncAt = 0, mixSig = ''; // the volume mixer (declared early: setOpen runs before the mixer code)
 
 // The main process polls the cursor and tells us when it is over the island
 const MACOS = api.platform === 'darwin';
-const SIZES = { compact: MACOS ? [464, 34] : [234, 34], open: [464, 360], toast: MACOS ? [520, 100] : [380, 100] };
+const toastSize = () => [Math.max(SIZES.toast[0], SIZES.compact[0] + 32), SIZES.toast[1]]; // the banner is never narrower than the pill above it
+const SIZES = { compact: MACOS ? [464, 34] : [234, 34], open: [624, 410], toast: MACOS ? [520, 100] : [380, 100] };
 // the pill is as tall as the menu bar (notched MacBooks) and leaves the notch free
 api.metrics().then((m) => {
   const h = m.bar;
+  setPillPos(m.pos === 'right', true);
   SIZES.compact[1] = h; SIZES.toast[1] = h + 64;
-  if (MACOS) SIZES.open[1] = 360 + h - 10;
+  if (MACOS) { macExtra = h - 10; SIZES.open[1] = lastOH + macExtra; }
   document.documentElement.style.setProperty('--ph', h + 'px');
   document.documentElement.style.setProperty('--gap', m.notch ? '210px' : '0px');
   if (!isOpen) { api.islandSize(...SIZES.compact); api.windowSize(...SIZES.compact); }
 });
-let needLeave = false, hoverInside = false, isOpen = false, shrinkTimer, pinned = false;
+let needLeave = false, hoverInside = false, isOpen = false, shrinkTimer, pinned = false, dragging = false;
 const setOpen = (v) => {
   if (v !== isOpen) ui(v ? 'island panel opened' : 'island panel closed');
+  if (v && !isOpen && !dragging) goHome(); // every time the pill opens it shows the home page, whatever tab was used last
   isOpen = v;
+  if (!v) closeMixer();
   island.classList.toggle('open', v);
   island.classList.toggle('compact', !v);
   api.islandSize(...SIZES[v ? 'open' : 'compact']);
   // the window is exactly as big as the island: grow at once, shrink after the animation
   clearTimeout(shrinkTimer);
   if (v) { endToast(); api.windowSize(...SIZES.open); }
-  else shrinkTimer = setTimeout(() => { if (!isOpen) api.windowSize(...(toastOn ? SIZES.toast : SIZES.compact)); }, 450);
+  else shrinkTimer = setTimeout(() => { if (!isOpen) api.windowSize(...(toastOn ? toastSize() : SIZES.compact)); }, 450);
 };
 setOpen(false);
 api.onHover((inside) => {
@@ -60,22 +67,24 @@ let lastOver = 0;
 document.addEventListener('dragover', (e) => { if (Date.now() - lastOver > 700) { lastOver = Date.now(); console.log('[drag] over', Math.round(e.clientX) + ',' + Math.round(e.clientY), 'island', island.offsetWidth + 'x' + island.offsetHeight); } });
 // dragging a file onto the island jumps straight to the tray
 document.addEventListener('dragenter', () => {
+  dragging = true; setTimeout(() => { dragging = false; }, 3000);
   console.log('[drop] dragenter');
-  const b = document.querySelector('nav button[data-tab="tray"]');
-  if (!b.classList.contains('on')) b.click();
+  showTab('tray');
 });
 
 const clock = () => new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 // pill text: shown as is; when it is wider than the pill it glides back and forth (pause - slide - pause), smoothly
 let pillShown = null;
-function setPillText(t) {
-  if (t === pillShown) return; // the clock ticks every second: don't restart the animation for identical text
-  pillShown = t;
+function setPillText(t, kara) {
+  const key = (kara ? 'k:' : 't:') + t;
+  if (key === pillShown) return; // the clock ticks every second: don't restart the animation for identical text
+  pillShown = key;
   const box = $('#pill-text');
   box.classList.remove('marquee');
   box.textContent = '';
   const inner = document.createElement('span');
   inner.textContent = t;
+  if (kara) inner.className = 'k'; // a sung line: it fills with colour as it is sung
   box.appendChild(inner);
   requestAnimationFrame(() => {
     const over = inner.scrollWidth - box.clientWidth;
@@ -86,14 +95,65 @@ function setPillText(t) {
     }
   });
 }
-setInterval(() => { if (!playing) setPillText(clock()); }, 1000);
-setPillText(clock());
+let curTitle = '', lyricNow = '';
+let pillPw = 0, pillTimer;
+const measure = document.createElement('canvas').getContext('2d');
+// what the small pill shows: the lyric line that is being sung, else the title of what plays, else the time
+function refreshPill() {
+  const t = lyricNow || (playing && curTitle ? curTitle : clock());
+  setPillText(t, !!lyricNow);
+  fitPill(lyricNow ? t : '');
+}
+const topClock = () => { $('#top-clock').textContent = new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); };
+setInterval(() => { topClock(); if (!playing) refreshPill(); }, 1000);
+topClock();
+refreshPill();
+// the letters are Gilroy: measure the pill again once the font is there
+if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { pillShown = null; refreshPill(); });
 
-document.querySelectorAll('nav button[data-tab]').forEach((b) => b.addEventListener('click', () => {
-  document.querySelectorAll('nav button[data-tab]').forEach((x) => x.classList.toggle('on', x === b));
-  ui('island tab -> ' + b.dataset.tab);
-  ['media', 'tray', 'link'].forEach((t) => ($(`#tab-${t}`).hidden = t !== b.dataset.tab));
-}));
+// pages: Home, Tray, Link. The mouse wheel moves between them and the dots show where you are.
+const PAGES = ['media', 'tray', 'link'];
+let pageIdx = 0, wheelLock = 0;
+island.dataset.page = 0;
+function showPage(i, instant) {
+  i = Math.max(0, Math.min(PAGES.length - 1, i));
+  const tr = $('#track');
+  if (instant) tr.classList.add('instant');
+  tr.style.transform = `translateX(${-i * 100}%)`;
+  if (instant) { void tr.offsetHeight; tr.classList.remove('instant'); }
+  if (i !== pageIdx) ui('island page -> ' + PAGES[i]);
+  pageIdx = i;
+  island.dataset.page = i;
+  updateOpenH();
+  document.querySelectorAll('#dots i').forEach((d) => d.classList.toggle('on', Number(d.dataset.p) === i));
+  if (i !== 0) closeMixer();
+}
+const showTab = (name) => showPage(PAGES.indexOf(name));
+document.querySelectorAll('#dots i').forEach((d) => (d.onclick = () => showPage(Number(d.dataset.p))));
+// Pages move with the wheel. A mouse wheel (it turns in whole notches) goes up / down; a trackpad (smooth, pixel by pixel) goes left / right,
+// like swiping between pages. A list that can still scroll keeps its own vertical wheel; at its end the wheel moves on to the next page.
+let wheelAt = 0, wheelHandled = false, wheelDir = 0, wheelMag = 0;
+$('#panel').addEventListener('wheel', (e) => {
+  const now = Date.now(), gap = now - wheelAt;
+  wheelAt = now;
+  if (gap > 140) wheelHandled = false; // a new gesture: the momentum of the last one has died out
+  const notched = e.deltaX === 0 && e.wheelDeltaY !== undefined && e.wheelDeltaY !== 0 && Math.abs(e.wheelDeltaY) % 120 === 0; // a mouse wheel
+  let d = 0;
+  if (notched) {
+    const sc = e.target.closest && e.target.closest('.scrolly');
+    if (sc && sc.scrollHeight > sc.clientHeight + 1) {
+      const top = sc.scrollTop <= 0, end = sc.scrollTop + sc.clientHeight >= sc.scrollHeight - 1;
+      if ((e.deltaY < 0 && !top) || (e.deltaY > 0 && !end)) return;
+    }
+    d = e.deltaY;
+  } else if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) d = e.deltaX; // trackpad: only the sideways swipe changes the page
+  // the momentum of the last swipe keeps arriving for about a second: a swipe the other way, or a clearly stronger one, is a new gesture
+  if (d) { if (wheelHandled && (Math.sign(d) !== wheelDir || Math.abs(d) > wheelMag * 1.8 + 6)) wheelHandled = false; wheelMag = Math.abs(d); }
+  if (Math.abs(d) < 8 || wheelHandled) return;
+  wheelHandled = true; wheelDir = Math.sign(d);
+  showPage(pageIdx + (d > 0 ? 1 : -1));
+}, { passive: true });
+function goHome() { closeMixer(); showPage(0, true); }
 // the gear opens the settings window (everything that can be set lives there)
 $('#gear').onclick = () => {
   ui('island gear clicked');
@@ -101,32 +161,62 @@ $('#gear').onclick = () => {
   // the panel gets out of the way: back to the small pill (it opens again only after the pointer has left it once)
   pinned = false; api.pin(false); needLeave = hoverInside; setOpen(false);
 };
-
-// media button icons: the normal ones are text symbols, the "10 seconds" ones are small drawings
-const MEDIA_ICON = {
-  prev: '&#9198;', next: '&#9197;',
-  back10: '<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3.6 12a8.4 8.4 0 1 0 2.5-5.9"/><path d="M3.4 3.8v4.2h4.2"/><text x="12" y="15.4" font-size="7.4" font-weight="700" text-anchor="middle" fill="currentColor" stroke="none" font-family="system-ui, sans-serif">10</text></svg>',
-  fwd10: '<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20.4 12a8.4 8.4 0 1 1-2.5-5.9"/><path d="M20.6 3.8v4.2h-4.2"/><text x="12" y="15.4" font-size="7.4" font-weight="700" text-anchor="middle" fill="currentColor" stroke="none" font-family="system-ui, sans-serif">10</text></svg>',
+// media symbols, drawn in the style of Apple's SF Symbols. The 10 second ones are for players without previous / next tracks.
+const SYM = {
+  prev: '<svg viewBox="0 0 24 24"><path d="M11.5 7v10L4.5 12zM20.5 7v10L13.5 12z"/></svg>',
+  next: '<svg viewBox="0 0 24 24"><path d="M12.5 7v10l7-5zM3.5 7v10l7-5z"/></svg>',
+  play: '<svg viewBox="0 0 24 24"><path d="M8 5.6v12.8L18.6 12z"/></svg>',
+  pause: '<svg viewBox="0 0 24 24"><rect x="6.6" y="5" width="3.8" height="14" rx="1.3"/><rect x="13.6" y="5" width="3.8" height="14" rx="1.3"/></svg>',
+  back10: '<svg viewBox="0 0 24 24" style="fill:none"><path d="M3.6 12a8.4 8.4 0 1 0 2.5-5.9"/><path d="M3.4 3.8v4.2h4.2"/><text x="12" y="15.4" font-size="7.4" font-weight="700" text-anchor="middle" fill="currentColor" stroke="none" font-family="Gilroy, system-ui, sans-serif">10</text></svg>',
+  fwd10: '<svg viewBox="0 0 24 24" style="fill:none"><path d="M20.4 12a8.4 8.4 0 1 1-2.5-5.9"/><path d="M20.6 3.8v4.2h-4.2"/><text x="12" y="15.4" font-size="7.4" font-weight="700" text-anchor="middle" fill="currentColor" stroke="none" font-family="Gilroy, system-ui, sans-serif">10</text></svg>',
 };
-const setIcon = (btn, name) => { if (btn.dataset.icon !== name) { btn.dataset.icon = name; btn.innerHTML = MEDIA_ICON[name]; } };
+const setIcon = (btn, name) => { if (btn.dataset.icon !== name) { btn.dataset.icon = name; btn.innerHTML = SYM[name]; } };
+setIcon($('#prev'), 'prev'); setIcon($('#play'), 'play'); setIcon($('#next'), 'next');
+// text that is wider than its box slides back and forth (only while the panel is open: an animation that never ends keeps the graphics process busy)
+function setMarq(box, text) {
+  const span = box.firstElementChild;
+  if (span.textContent === text) return;
+  span.textContent = text;
+  box.classList.remove('marquee');
+  requestAnimationFrame(() => {
+    const over = span.scrollWidth - box.clientWidth;
+    if (over > 2) { span.style.setProperty('--shift', -(over + 14) + 'px'); span.style.animationDuration = ((over + 14) / 22 + 4).toFixed(1) + 's'; box.classList.add('marquee'); }
+  });
+}
 // media
+let playLock = 0, playLockVal = false; // right after a press the button shows the new state at once; the player's answer is trusted again after a moment
+let following = false, iMaster = false, localMedia = null, remote = { todos: [], events: [], media: null };
 api.onMedia((m) => {
-  playing = m.status === 'Playing';
-  $('#np-title').textContent = m.title || 'Nothing playing';
+  localMedia = m && m.title ? m : null;
+  if (iMaster) pushHome();
+  if (!following) handleMedia(m);
+});
+function handleMedia(m) {
+  playing = Date.now() < playLock ? playLockVal : m.status === 'Playing';
+  setMarq($('#np-title'), m.title || 'Nothing playing');
   $('#np-artist').textContent = m.artist || '';
   if (m.thumb !== undefined || !m.title) { const t = m.title ? m.thumb : '', img = $('#np-img'); if (t) img.src = t; img.hidden = !t; $('#np-note').hidden = !!t; }
-  $('#play').innerHTML = playing ? '&#9208;' : '&#9654;';
+  setIcon($('#play'), playing ? 'pause' : 'play');
   // a player without previous / next tracks (a podcast, a single video): the buttons go back / forward 10 seconds, and say so with their icon
   const seekBack = m.canPrev === false, seekFwd = m.canNext === false;
   $('#prev').title = seekBack ? 'Back 10 seconds' : 'Previous';
   $('#next').title = seekFwd ? 'Forward 10 seconds' : 'Next';
   setIcon($('#prev'), seekBack ? 'back10' : 'prev');
   setIcon($('#next'), seekFwd ? 'fwd10' : 'next');
-  $('#pill-dot').classList.toggle('live', playing);
-  setPillText(playing && m.title ? m.title : clock());
-});
+  curTitle = m.title || '';
+  lyricsFollow(m);
+  refreshPill();
+  if (playing && isOpen) mixerSync();
+}
 $('#prev').onclick = () => api.mediaKey('prev');
-$('#play').onclick = () => api.mediaKey('play');
+$('#play').onclick = () => {
+  lyr.pos += playing ? (Date.now() - lyr.at) / 1000 : 0; lyr.at = Date.now(); // keep the lyric position where it is while the state flips
+  playing = !playing; playLock = Date.now() + 1200; playLockVal = playing; // no waiting for the player: the icon, the lyrics and the pill follow the press at once
+  setIcon($('#play'), playing ? 'pause' : 'play');
+  if (lyr.lines) lyricTick();
+  refreshPill();
+  api.mediaKey('play');
+};
 $('#next').onclick = () => api.mediaKey('next');
 
 // file tray
@@ -162,27 +252,93 @@ function startChipDrag(e0, f, chip) {
   const leave = () => { if (finish()) api.dragOut(f); };
   document.addEventListener('mousemove', move); document.addEventListener('mouseup', up); document.documentElement.addEventListener('mouseleave', leave);
 }
+// a deleted file turns to dust: the chip is cut into small squares that drift up and away, left to right, like Thanos' snap
+let dustCv = null, dustP = [], dustRaf = 0;
+const rectOf = (el, delay) => { const r = el.getBoundingClientRect(); return { x: r.left, y: r.top, w: r.width, h: r.height, delay }; };
+function dust(rects) {
+  if (!dustCv) {
+    dustCv = document.createElement('canvas');
+    dustCv.style.cssText = 'position:fixed;left:0;top:0;pointer-events:none;z-index:60';
+    document.body.appendChild(dustCv);
+  }
+  const k = window.devicePixelRatio || 1;
+  dustCv.width = Math.round(innerWidth * k); dustCv.height = Math.round(innerHeight * k);
+  dustCv.style.width = innerWidth + 'px'; dustCv.style.height = innerHeight + 'px';
+  const deco = getComputedStyle(document.documentElement).getPropertyValue('--deco').trim() || '#0a84ff';
+  const now = performance.now(), S = 3;
+  const ms = Math.max(...rects.map((r) => r.delay)) + 2100;
+  holdH = lastOH; holdUntil = Date.now() + ms; setTimeout(updateOpenH, ms + 30);
+  rects.forEach((r) => {
+    for (let gx = 0; gx < r.w; gx += S) for (let gy = 0; gy < r.h; gy += S) {
+      const u = gx / r.w, v = (gy - r.h / 2) / r.h;
+      const c = u < 0.17 && Math.abs(v) < 0.33 ? deco : (u > 0.2 && u < 0.85 && Math.abs(v) < 0.14 && Math.random() < 0.7 ? '#e5e5ea' : (Math.random() < 0.3 ? '#2a2a2e' : '#1c1c1e'));
+      dustP.push({ x: r.x + gx, y: r.y + gy, vx: 14 + Math.random() * 46, vy: -(8 + Math.random() * 40), s: S - Math.random(), t0: now + r.delay + u * 380 + Math.random() * 120, life: 700 + Math.random() * 600, c });
+    }
+  });
+  if (!dustRaf) dustRaf = requestAnimationFrame(dustLoop);
+}
+function dustLoop(t) {
+  const ctx = dustCv.getContext('2d'), k = window.devicePixelRatio || 1;
+  ctx.setTransform(k, 0, 0, k, 0, 0);
+  ctx.clearRect(0, 0, innerWidth, innerHeight);
+  const live = [];
+  for (const p of dustP) {
+    if (t < p.t0) { ctx.globalAlpha = 1; ctx.fillStyle = p.c; ctx.fillRect(p.x, p.y, S3, S3); live.push(p); continue; } // not its turn yet: still part of the chip
+    const f = (t - p.t0) / p.life;
+    if (f >= 1) continue;
+    const e = f * f;
+    ctx.globalAlpha = 1 - f;
+    ctx.fillStyle = p.c;
+    ctx.fillRect(p.x + p.vx * e * 3.2, p.y + p.vy * e * 3.2 + Math.sin(f * 7 + p.x) * 3 * f, p.s * (1 - f * 0.6), p.s * (1 - f * 0.6));
+    live.push(p);
+  }
+  dustP = live;
+  if (live.length) dustRaf = requestAnimationFrame(dustLoop);
+  else { dustRaf = 0; ctx.clearRect(0, 0, innerWidth, innerHeight); }
+}
+const S3 = 3;
+// what kind of file it is (the badge shows its extension, the card its kind)
+const KINDS = [['Image', 'png jpg jpeg gif webp bmp heic svg'], ['Video', 'mp4 mov mkv avi webm m4v'], ['Audio', 'mp3 wav flac m4a aac ogg'], ['Document', 'pdf doc docx xls xlsx ppt pptx txt md csv rtf key pages numbers'], ['Archive', 'zip rar 7z tar gz dmg iso'], ['App', 'exe msi apk pkg']];
+const kindOf = (name) => {
+  const ext = (String(name).split('.').pop() || '').toLowerCase();
+  const k = KINDS.find(([, l]) => l.split(' ').includes(ext));
+  return { label: k ? k[0] : 'File', ext: (String(name).includes('.') ? ext : 'file').slice(0, 4).toUpperCase() };
+};
+const fmtSize = (b) => (!b ? '' : b < 1024 * 1024 ? Math.max(1, Math.round(b / 1024)) + ' KB' : b < 1024 ** 3 ? (b / 1024 / 1024).toFixed(b < 1e7 ? 1 : 0) + ' MB' : (b / 1024 ** 3).toFixed(1) + ' GB');
+let shownFiles = new Set(), filesFirst = true;
 const renderFiles = () => {
-  $('#files-head').hidden = !files.length;
-  $('#files-count').textContent = files.length === 1 ? '1 file in the tray' : files.length + ' files in the tray';
-  $('#send-label').textContent = connected ? (files.length ? `Send tray (${files.length})` : 'Send to other PC') : 'Link a computer to send';
+  const n = files.length;
+  $('#clear').hidden = !n;
+  $('#files-count').textContent = n ? (n === 1 ? '1 file' : n + ' files') : '';
+  $('#send-label').textContent = connected ? (n ? `Send tray (${n})` : 'A-Drop') : 'A-Drop';
   const box = $('#files'); box.innerHTML = '';
+  let fresh = false;
   files.forEach((f, i) => {
-    const el = document.createElement('div');
+    const base = f.split(/[\\/]/).pop(), el = document.createElement('div');
     el.className = 'file';
-    const nm = document.createElement('span'); nm.className = 'fname'; nm.textContent = f.split(/[\\/]/).pop(); el.appendChild(nm);
-    el.title = f + '\n(drag onto "Send" to send it, double-click to open, right-click to remove)';
+    if (!shownFiles.has(f)) { el.classList.add('new'); fresh = true; }
+    const ext = document.createElement('b'); ext.className = 'ext'; ext.textContent = kindOf(base).ext;
+    const nm = document.createElement('span'); nm.className = 'fname'; nm.textContent = base;
+    const rm = document.createElement('button'); rm.className = 'rm'; rm.textContent = '\u2715'; rm.title = 'Remove from the tray';
+    rm.onmousedown = (e) => e.stopPropagation();
+    rm.onclick = (e) => { e.stopPropagation(); const r = rectOf(el, 0); files.splice(i, 1); api.setTray(files); dust([r]); renderFiles(); };
+    el.append(ext, nm, rm);
+    el.title = f + '\n(drag onto A-Drop to send it, double-click to open)';
     el.draggable = false;
     el.onmousedown = (e) => { if (e.button === 0) startChipDrag(e, f, el); };
     // own double-click detection: some pointers (and first clicks on macOS) don't produce dblclick events
     let lastClick = 0;
     el.onclick = () => { if (Date.now() - chipDragEnd < 300) return; const t = Date.now(); if (t - lastClick < 500) { lastClick = 0; api.open(f); } else lastClick = t; };
-    el.oncontextmenu = (e) => { e.preventDefault(); files.splice(i, 1); api.setTray(files); renderFiles(); };
+    el.oncontextmenu = (e) => { e.preventDefault(); const r = rectOf(el, 0); files.splice(i, 1); api.setTray(files); dust([r]); renderFiles(); };
     box.appendChild(el);
   });
+  shownFiles = new Set(files);
+  if (fresh && !filesFirst) { const d = $('#drop'); d.classList.remove('bump'); void d.offsetWidth; d.classList.add('bump'); }
+  filesFirst = false;
+  updateOpenH();
 };
 api.getTray().then((l) => { files = l; renderFiles(); });
-api.onTray((l) => { files = l; renderFiles(); document.querySelector('nav button[data-tab="tray"]').click(); });
+api.onTray((l) => { files = l; renderFiles(); showTab('tray'); });
 const zone = (el, onFiles) => {
   ['dragenter', 'dragover'].forEach((ev) => el.addEventListener(ev, (e) => { e.preventDefault(); el.classList.add('over'); }));
   ['dragleave', 'drop'].forEach((ev) => el.addEventListener(ev, () => el.classList.remove('over')));
@@ -200,30 +356,88 @@ $('#send').addEventListener('click', () => {
   files.slice().forEach(sendPath);
 });
 zone($('#send'), (ps) => { console.log('[drop] send', ps.length); if (!connected) { $('#xfer').textContent = 'Link a computer first (Link tab)'; return; } ps.forEach(sendPath); });
-$('#clear').onclick = () => { ui('tray cleared'); files = []; api.setTray(files); renderFiles(); $('#xfer').textContent = ''; };
+$('#clear').onclick = () => { ui('tray cleared'); const rs = [...document.querySelectorAll('#files .file')].map((el, i) => rectOf(el, i * 90)); files = []; api.setTray(files); dust(rs); renderFiles(); $('#xfer').textContent = ''; };
 // macOS: the main process recognises a file dragged onto the island itself (the panel window may not receive the drop)
 let lastDomDrop = 0;
 document.addEventListener('drop', () => { lastDomDrop = Date.now(); }, true);
-api.onDragStart(() => { const b = document.querySelector('nav button[data-tab="tray"]'); if (!b.classList.contains('on')) b.click(); });
+api.onDragStart(() => showTab('tray'));
 api.onNativeDrop((ps, x, y) => {
   if (Date.now() - lastDomDrop < 1500) return; // the page got the drop itself
   const el = document.elementFromPoint(x, y);
   console.log('[drop] native', ps.length, el && (el.id || el.className || el.tagName));
   if (el && el.closest('#send')) { if (!connected) { $('#xfer').textContent = 'Link a computer first (Link tab)'; return; } ps.forEach(sendPath); }
   else { ps.forEach((p) => files.includes(p) || files.push(p)); api.setTray(files); renderFiles(); }
-  const b = document.querySelector('nav button[data-tab="tray"]'); if (!b.classList.contains('on')) b.click();
+  showTab('tray');
 });
 
 const sendPath = async (p) => {
   ui('tray send file ' + String(p).split(/[\\/]/).pop());
   const r = await api.sendFile(p);
-  if (!r.ok) $('#xfer').textContent = 'Send failed: ' + r.error;
+  if (!r.ok) {
+    $('#xfer').textContent = 'Send failed: ' + r.error;
+    const base = String(p).split(/[\\/]/).pop();
+    for (const [k, x] of xfers) if (!x.done && x.dir === 'out' && (x.name === base || x.name === base + '.zip')) { x.el.remove(); xfers.delete(k); } // no card stays at 0%
+    $('#send').classList.toggle('busy', [...xfers.values()].some((v) => !v.done));
+    updateOpenH();
+  }
 };
+// transfers: a card for every file on its way (kind, name, percent, time left), with a bar that fills in the decoration colour
+const xfers = new Map();
+const fmtLeft = (sec) => (sec < 2 ? 'almost done' : sec < 60 ? Math.ceil(sec) + ' s left' : Math.ceil(sec / 60) + ' min left');
+const CHECK = '<svg viewBox="0 0 24 24"><path d="M5.5 12.5l4.2 4.2L18.5 7.8"/></svg>';
+function xferCard(x) {
+  const k = kindOf(x.name);
+  const el = document.createElement('div'); el.className = 'xc';
+  el.innerHTML = '<b class="ext"></b><div class="xi"><div class="xn"></div><div class="xm"></div></div><div class="xp"></div><i class="bar"><u></u></i>';
+  el.querySelector('.ext').textContent = k.ext;
+  el.querySelector('.xn').textContent = x.name; el.querySelector('.xn').title = x.name;
+  return el;
+}
+function xferPaint(x) {
+  const k = kindOf(x.name), out = x.dir === 'out', el = x.el;
+  el.classList.toggle('done', !!x.done);
+  el.querySelector('u').style.width = x.pct + '%';
+  el.querySelector('.xp').innerHTML = x.done ? CHECK : x.pct + '%';
+  const secs = (Date.now() - x.t0) / 1000;
+  const left = !x.done && x.pct >= 4 && secs > 0.8 ? fmtLeft(secs * (100 - x.pct) / x.pct) : '';
+  el.querySelector('.xm').textContent = x.done ? (out ? 'Sent' : 'Received') + ' \u00b7 ' + k.label : [out ? 'Sending' : 'Receiving', k.label, fmtSize(x.size), left].filter(Boolean).join(' \u00b7 ');
+}
 api.onTransfer((t) => {
-  const arrow = t.dir === 'out' ? 'Sending' : 'Receiving';
-  $('#xfer').textContent = t.done ? `${t.dir === 'out' ? 'Sent' : 'Received'} ${t.name}` : `${arrow} ${t.name} ${t.pct}%`;
+  const key = t.dir + '|' + t.name;
+  let x = xfers.get(key);
+  if (!x || x.done) {
+    x = { dir: t.dir, name: t.name, t0: Date.now(), size: t.size || 0, pct: 0, done: false };
+    x.el = xferCard(x); xfers.set(key, x);
+    $('#xcards').appendChild(x.el);
+    showTab('tray');
+  }
+  x.pct = Math.max(x.pct, t.pct || 0); x.size = t.size || x.size;
+  if (t.done) {
+    x.done = true; x.pct = 100;
+    const el = x.el;
+    setTimeout(() => { el.classList.add('out'); setTimeout(() => { el.remove(); updateOpenH(); }, 400); }, 2600);
+  }
+  xferPaint(x);
+  $('#send').classList.toggle('busy', [...xfers.values()].some((v) => !v.done));
   if (t.done && t.dir === 'in' && t.path && !files.includes(t.path)) { files.push(t.path); api.setTray(files); renderFiles(); }
+  updateOpenH();
 });
+
+// the panel is as tall as its page needs (the tray page is short, the others are full)
+function wantH() { return pageIdx === 1 ? Math.max(190, Math.min(410, 90 + $('#tray-wrap').offsetHeight)) : pageIdx === 2 ? Math.max(250, Math.min(450, 92 + $('#link-wrap').offsetHeight)) : 410; }
+let holdH = 0, holdUntil = 0; // while dust is flying the panel keeps its height
+function updateOpenH() {
+  let h = wantH();
+  if (Date.now() < holdUntil) h = Math.max(h, holdH);
+  if (h === lastOH) return;
+  const grow = h > lastOH;
+  lastOH = h;
+  document.documentElement.style.setProperty('--oh', h + 'px');
+  SIZES.open[1] = h + macExtra;
+  clearTimeout(ohTimer);
+  const apply = () => { if (isOpen) { api.islandSize(...SIZES.open); api.windowSize(...SIZES.open); } };
+  if (grow) apply(); else ohTimer = setTimeout(apply, 480);
+}
 
 // link
 const ICON = {
@@ -240,7 +454,7 @@ const fmtPin = (p) => (p && p.length === 6 ? p.slice(0, 3) + ' ' + p.slice(3) : 
 const say = (text, good) => { const m = $('#link-msg'); m.textContent = text; m.style.color = good ? '#30d158' : ''; };
 const renderLink = (s) => {
   linkInfo = s;
-  if (connected !== s.connected) { connected = s.connected; $('#send').classList.toggle('off', !connected); $('#send-label').textContent = connected ? 'Send to other PC' : 'Link a computer to send'; renderFiles(); }
+  if (connected !== s.connected) { connected = s.connected; $('#send').classList.toggle('off', !connected); $('#send-label').textContent = connected ? (files.length ? 'Send tray (' + files.length + ')' : 'A-Drop') : 'A-Drop'; renderFiles(); }
   $('#me-name').textContent = s.name || '';
   $('#pin').textContent = fmtPin(s.pin);
   $('#addr').textContent = (s.addresses || []).join('  ') || 'No network';
@@ -248,6 +462,8 @@ const renderLink = (s) => {
   $('#peer-card').hidden = !s.connected;
   $('#peer-actions').hidden = !s.connected;
   $('#peer-side-row').hidden = !s.connected;
+  renderMaster(s);
+  setRole(!!(s.connected && s.master && s.master.on && s.master.peer), !!(s.connected && s.master && s.master.on && s.master.mine));
   document.querySelectorAll('#peer-side button').forEach((b) => b.classList.toggle('on', b.dataset.side === s.peerSide));
   if (s.connected) {
     $('#peer-icon').innerHTML = ICON[s.peerPlat] || ICON.win32;
@@ -260,9 +476,29 @@ const renderLink = (s) => {
   $('#pill-link').textContent = s.connected ? '⇄' : '';
   // the other computer is steering this one: the link mark turns amber and pulses, so nobody wonders why the pointer moves
   $('#pill-link').classList.toggle('ctl', !!s.connected && s.state === 'controlled');
+  $('#top-link').classList.toggle('on', !!s.connected); // green while linked, grey when not
+  $('#top-link').classList.toggle('ctl', !!s.connected && s.state === 'controlled');
   $('#pill-link').title = s.connected ? (s.state === 'controlled' ? 'Being controlled by ' + (s.peerName || 'the other computer') : s.state === 'controlling' ? 'Controlling ' + (s.peerName || 'the other computer') : 'Linked to ' + (s.peerName || 'the other computer')) : '';
   renderNearby();
+  updateOpenH();
 };
+
+// master: one computer's mouse and keyboard run both; the other ignores its own until it becomes the master (Ctrl+Alt+M on it)
+function renderMaster(s) {
+  $('#master-row').hidden = !s.connected;
+  if (!s.connected) return;
+  const m = s.master || { on: false };
+  $('#master-peer').textContent = s.peerName || 'The other';
+  $('#master-seg').querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.m === (!m.on || !m.id ? 'off' : m.mine ? 'me' : 'peer')));
+  $('#master-hint').textContent = !m.on ? 'Off: each computer uses its own mouse and keyboard, and a computer takes control back when its own mouse moves.'
+    : (m.mine ? 'This computer is the master. The other computer ignores its own mouse and keyboard.'
+    : 'The other computer is the master: this mouse and keyboard are switched off. Press Ctrl+Alt+M on this keyboard to take over.') + (m.auto ? ' (Automatic: the first computer that was calibrated for Look to switch; until then the Windows PC.)' : '');
+}
+$('#master-seg').addEventListener('click', (e) => {
+  const b = e.target.closest('button'); if (!b) return;
+  ui('link master -> ' + b.dataset.m);
+  api.masterSet(b.dataset.m !== 'off', b.dataset.m === 'peer' ? 'peer' : 'me');
+});
 
 // computers found on this network
 let nearby = [];
@@ -342,7 +578,7 @@ api.onPerm(showPerm);
 $('#arrange').onclick = () => { ui('arrange screens clicked'); api.openArrange(); };
 
 // Look to switch: the camera banner and the dot in the pill (the controls are in the settings window)
-const renderGaze = (g) => { $('#cam-banner').hidden = !g.camera; $('#pill-cam').hidden = !g.camera; };
+const renderGaze = (g) => { $('#cam-banner').hidden = !g.camera; $('#pill-cam').hidden = true; $('#pill-dot').classList.toggle('live', !!g.camera); }; // the green dot in the pill = the camera is in use
 api.gazeGet().then(renderGaze);
 api.onGaze(renderGaze);
 
@@ -377,7 +613,41 @@ function runRing(ready, hold, there) {
   run(ready);
   ringTimers.push(setTimeout(() => { icon.classList.add('hold'); run(hold); text.textContent = 'Hold still...'; }, ready * 1000));
 }
+// notification sounds: short tones made with the browser's synthesizer (no sound files). Each kind has its own tune.
+let audioCtx = null;
+const TUNES = {
+  ok: [[880, 0, 0.09], [1318, 0.09, 0.16]],
+  sent: [[587, 0, 0.08], [880, 0.08, 0.08], [1175, 0.16, 0.18]],
+  received: [[1175, 0, 0.1], [880, 0.1, 0.1], [659, 0.2, 0.22]],
+  connected: [[523, 0, 0.09], [659, 0.09, 0.09], [784, 0.18, 0.09], [1047, 0.27, 0.26]],
+  err: [[330, 0, 0.14, 'triangle'], [247, 0.17, 0.26, 'triangle']],
+  start: [[196, 0, 0.7, 'triangle'], [392, 0.02, 0.14], [523, 0.14, 0.14], [659, 0.26, 0.14], [784, 0.38, 0.16], [1047, 0.52, 0.6]],
+  shot: [[2400, 0, 0.03, 'square'], [1500, 0.035, 0.07, 'sine']],
+  impact: [[95, 0, 0.14, 'sine'], [58, 0.015, 0.2, 'sine'], [1900, 0, 0.012, 'square']],
+};
+function chime(kind, vol) {
+  const tune = TUNES[kind] || TUNES.ok;
+  if (!vol) return;
+  if (MACOS) { api.soundPlay(kind, vol); return; } // the Mac plays its tones itself (afplay)
+  try {
+    audioCtx = audioCtx || new AudioContext();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    const t0 = audioCtx.currentTime + 0.02, peak = Math.pow(vol / 100, 1.3) * 0.5;
+    for (const [freq, at, len, type] of tune) {
+      const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+      o.type = type || 'sine'; o.frequency.value = freq;
+      g.gain.setValueAtTime(0.0001, t0 + at);
+      g.gain.exponentialRampToValueAtTime(Math.max(0.0002, peak), t0 + at + 0.012);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + at + len + 0.06);
+      o.connect(g); g.connect(audioCtx.destination);
+      o.start(t0 + at); o.stop(t0 + at + len + 0.08);
+    }
+  } catch {}
+}
+api.onChime((c) => chime(c.kind, c.vol));
+const soundKind = (t) => (t.kind === 'err' ? 'err' : t.icon === 'sent' ? 'sent' : t.icon === 'received' ? 'received' : /^Connected/.test(t.title || '') ? 'connected' : /^Screenshot/.test(t.title || '') ? 'shot' : 'ok');
 api.onToast((t) => {
+  if (t.kind !== 'progress') chime(soundKind(t), t.sound || 0);
   stopRing();
   $('#toast-icon').classList.remove('hold');
   const err = t.kind === 'err', prog = t.kind === 'progress';
@@ -385,6 +655,7 @@ api.onToast((t) => {
   $('#toast-text').textContent = t.text;
   $('#toast').classList.toggle('err', err);
   $('#toast').classList.toggle('prog', prog);
+  $('#toast').classList.toggle('ico', t.icon === 'sent' || t.icon === 'received');
   $('#toast-text').textContent = t.text;
   const gl = $('#toast-glyph');
   gl.hidden = !(prog && t.step);
@@ -392,6 +663,8 @@ api.onToast((t) => {
   gl.title = prog && t.step ? `Step ${t.step} of ${t.of || 2}` : '';
   gl.innerHTML = Array.from({ length: t.of || 2 }, (_x, i) => `<i class="${i + 1 === t.step ? 'on' : i + 1 < t.step ? 'done' : ''}"></i>`).join('');
   if (prog) runRing(t.ready || 3, t.hold || 2, t.glyph === 'there');
+  else if (t.icon === 'sent') $('#toast-icon').innerHTML = '<svg viewBox="0 0 24 24"><path d="M4 12l16-8-6 16-3-7z"/></svg>';
+  else if (t.icon === 'received') $('#toast-icon').innerHTML = '<svg viewBox="0 0 24 24"><path d="M12 4v11M7 11l5 5 5-5M5 20h14"/></svg>';
   else $('#toast-icon').innerHTML = err
     ? '<svg viewBox="0 0 24 24"><path d="M12 6.5v7"/><path d="M12 17.5v.01"/></svg>'
     : '<svg viewBox="0 0 24 24"><path d="M5.5 12.5l4.2 4.2L18.5 7.8"/></svg>';
@@ -402,7 +675,7 @@ api.onToast((t) => {
     pinned = false; api.pin(false);
     needLeave = hoverInside; // don't pop the panel open again until the mouse has left the pill
     setOpen(false);
-  } else { api.islandSize(...SIZES.compact); api.windowSize(...SIZES.toast); }
+  } else { api.islandSize(...SIZES.compact); api.windowSize(...toastSize()); }
   // replay the entrance animation (block drops in, icon pops, tick draws, text slides up)
   const box = $('#toast');
   box.classList.remove('play'); void box.offsetWidth; box.classList.add('play');
@@ -410,52 +683,345 @@ api.onToast((t) => {
   toastTimer = setTimeout(endToast, prog ? ((t.ready || 3) + (t.hold || 2)) * 1000 + 6000 : 4500); // a step stays until the next message replaces it
 });
 
-
-// calendar strip: today and the days around it (a real calendar can be connected later)
-const renderCalendar = () => {
+// calendar: yesterday, today, tomorrow and the day after, with a coloured dot for every activity (Settings > Calendar connects the calendars)
+let calEvents = [], calSources = 0;
+const DAY = 86400000;
+const EV_COLORS = ['#0a84ff', '#30d158', '#ff9f0a', '#bf5af2', '#ff453a', '#64d2ff'];
+function renderCalendar() {
   const now = new Date();
-  $('#cal-month').textContent = now.toLocaleDateString([], { month: 'short' });
-  $('#cal-year').textContent = now.getFullYear();
+  const base = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime() - DAY; // first shown day = yesterday
+  const win = calEvents.filter((e) => e.start < base + 4 * DAY && e.end > base).sort((a, b) => a.start - b.start);
+  // every activity has its own colour: the same dot sits on its days and in the list under them
+  win.forEach((e, i) => { e.color = EV_COLORS[i % EV_COLORS.length]; });
   const box = $('#cal-week'); box.innerHTML = '';
-  for (let d = -2; d <= 2; d++) {
-    const t = new Date(now.getFullYear(), now.getMonth(), now.getDate() + d);
+  for (let d = 0; d < 4; d++) {
+    const t = new Date(base + d * DAY + 3600000), s = base + d * DAY;
     const el = document.createElement('div');
-    el.className = 'day' + (d === 0 ? ' today' : '') + (d < 0 ? ' past' : '');
-    el.innerHTML = '<small></small><b></b>';
-    el.querySelector('small').textContent = t.toLocaleDateString([], { weekday: 'short' }).toUpperCase();
+    el.className = 'day ' + ['past', 'd0', 'd1', 'd2'][d];
+    el.innerHTML = '<small></small><b></b><span class="dots"></span>';
+    el.querySelector('small').textContent = t.toLocaleDateString([], { weekday: 'short' });
     el.querySelector('b').textContent = t.getDate();
+    win.filter((e) => e.start < s + DAY && e.end > s).slice(0, 3).forEach((e) => { const i = document.createElement('i'); i.style.background = e.color; el.querySelector('.dots').appendChild(i); });
     box.appendChild(el);
   }
-};
+  const ev = $('#cal-events'); ev.innerHTML = '';
+  win.slice(0, 3).forEach((e) => {
+    const row = document.createElement('div'); row.className = 'e';
+    const dot = document.createElement('i'); dot.style.background = e.color;
+    const dn = document.createElement('time'); dn.textContent = new Date(Math.max(e.start, base) + 3600000).getDate();
+    const tt = document.createElement('span'); tt.textContent = e.title; tt.title = e.title + (e.place ? ' - ' + e.place : '');
+    row.append(dot, dn, tt); ev.appendChild(row);
+  });
+  if (win.length > 3) { const m = document.createElement('div'); m.className = 'more'; m.textContent = '+' + (win.length - 3) + ' more'; ev.appendChild(m); }
+  const empty = $('#cal-empty');
+  empty.hidden = win.length > 0;
+  empty.textContent = calSources ? 'No activities in these days' : 'Add a calendar in Settings > Calendar';
+}
+async function loadEvents() {
+  if (following) { calEvents = remote.events; calSources = 1; renderCalendar(); return; }
+  try {
+    const d = new Date(); d.setHours(0, 0, 0, 0);
+    const from = d.getTime() - 3 * DAY;
+    calEvents = await api.calRange(from, from + 8 * DAY);
+    calSources = (await api.calSources()).length;
+  } catch {}
+  renderCalendar();
+  pushHome();
+}
 renderCalendar();
+loadEvents();
+api.onCal(() => loadEvents());
 setInterval(renderCalendar, 60000);
-// Home page, left button: Calibrate while a computer is linked, Connect (opens the Link tab) while none is. Under it, while linked, the
-// Look to switch switch.
-let gazeNow = { enabled: false }, nookLinked = false;
-const gotoLink = () => document.querySelector('nav button[data-tab="link"]').click();
-const renderNook = () => {
-  const g = gazeNow;
-  $('#nook-cal-ico').hidden = !nookLinked;
-  $('#nook-cal-link').hidden = nookLinked;
-  $('#nook-cal-text').textContent = !nookLinked ? 'Connect' : !g.enabled ? 'Calibrate' : g.calibrating ? 'Calibrating...' : g.calibrated ? 'Recalibrate' : 'Calibrate';
-  $('#nook-gaze').hidden = !nookLinked;
-  $('#nook-gaze-sw').classList.toggle('on', !!g.enabled);
-  $('#nook-gaze-sw').setAttribute('aria-checked', g.enabled ? 'true' : 'false');
+setInterval(loadEvents, 10 * 60000);
+
+// To Do list (kept on this computer)
+let todos = [];
+try { todos = JSON.parse(localStorage.getItem('atuls-todo') || '[]').filter((x) => x && typeof x.t === 'string'); } catch {}
+const saveTodos = () => { try { localStorage.setItem('atuls-todo', JSON.stringify(todos)); } catch {} };
+const T = () => (following ? remote.todos : todos); // the list on show: this computer's own, or the master's
+function commitTodos() { if (following) api.homeTodo(remote.todos); else { saveTodos(); pushHome(); } }
+function renderTodos() {
+  const list = T(), box = $('#todo-list'); box.innerHTML = '';
+  list.forEach((x, i) => {
+    const row = document.createElement('div'); row.className = 'ti' + (x.done ? ' done' : '');
+    const ck = document.createElement('button'); ck.className = 'ck'; ck.setAttribute('aria-label', 'Done');
+    ck.onclick = () => { x.done = !x.done; commitTodos(); renderTodos(); };
+    const tx = document.createElement('span'); tx.textContent = x.t; tx.title = x.t;
+    const rm = document.createElement('button'); rm.className = 'rm'; rm.textContent = '\u2715'; rm.title = 'Remove';
+    rm.onclick = () => { list.splice(i, 1); commitTodos(); renderTodos(); };
+    row.append(ck, tx, rm); box.appendChild(row);
+  });
+}
+$('#todo-in').addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter') return;
+  const t = e.target.value.trim(), list = T();
+  if (!t || list.length >= 100) return;
+  list.push({ t, done: false }); e.target.value = '';
+  commitTodos(); renderTodos();
+  const l = $('#todo-list'); l.scrollTop = l.scrollHeight;
+});
+// clear: the finished items go; when none is finished, the whole list goes
+$('#todo-clear').onclick = () => {
+  ui('home: to do list cleared');
+  const keep = T().some((x) => x.done) ? T().filter((x) => !x.done) : [];
+  if (following) remote.todos = keep; else todos = keep;
+  commitTodos(); renderTodos();
 };
-api.onGaze((g) => { gazeNow = g; renderNook(); });
-api.gazeGet().then((g) => { gazeNow = g; renderNook(); });
-api.onLink((st) => { nookLinked = !!st.connected; renderNook(); });
-api.linkStatus().then((st) => { nookLinked = !!st.connected; renderNook(); });
-$('#nook-cal').onclick = async () => {
-  ui('home: ' + (nookLinked ? 'calibrate' : 'connect') + ' clicked');
-  if (!nookLinked) return gotoLink(); // nothing to calibrate without a linked computer: open the Link tab
+renderTodos();
+
+// master mode: the master's Home page (to do list, calendar, music) is what both computers show. The master sends it whenever it changes;
+// the other computer shows it, sends its to do edits back, and its music buttons drive the master's player.
+let pushTimer = 0, lastThumbSent = null;
+function pushHome(full) {
+  if (!iMaster) return;
+  clearTimeout(pushTimer);
+  pushTimer = setTimeout(() => {
+    let media = null;
+    if (localMedia) { media = { ...localMedia }; if (!full && media.thumb === lastThumbSent) delete media.thumb; else lastThumbSent = media.thumb; }
+    api.homePush({ todos, events: calEvents, media });
+  }, 250);
+}
+setInterval(() => pushHome(), 5000);
+function setRole(f, m) {
+  if (f === following && m === iMaster) return;
+  const wasFollowing = following;
+  following = f; iMaster = m;
+  if (m) pushHome(true);
+  if (f) { remote = { todos: [], events: [], media: null }; handleMedia({}); calEvents = []; renderCalendar(); }
+  if (wasFollowing && !f) { loadEvents(); }
+  renderTodos();
+}
+api.onHome((m) => {
+  if (!following) return;
+  remote.todos = Array.isArray(m.todos) ? m.todos : []; remote.events = Array.isArray(m.events) ? m.events : [];
+  renderTodos();
+  calEvents = remote.events; calSources = 1; renderCalendar();
+  if (m.media) { remote.media = { ...(m.media.thumb === undefined && remote.media ? { thumb: remote.media.thumb } : {}), ...m.media }; handleMedia(remote.media); }
+  else { remote.media = null; handleMedia({}); }
+});
+api.onTodo((list) => { if (!iMaster) return; todos = list.filter((x) => x && typeof x.t === 'string'); saveTodos(); renderTodos(); pushHome(); });
+
+// lyrics: the time-stamped lines of the playing song come from the main process (LRCLIB); the position is taken from every media update and
+// carried on by the clock in between. The line being sung shows in the small pill and, with the lines around it, on the home page; it fills
+// with colour as it is sung.
+let lyr = { key: '', lines: null, pos: 0, at: 0, idx: -2, shown: -2, els: [] };
+let lyricsEnabled = true;
+api.startupGet().then((s) => { lyricsEnabled = s.lyrics !== false; }).catch(() => {});
+const lyrNote = (t) => { $('#lyr-note').hidden = !t; $('#lyr-note').textContent = t || ''; };
+function renderLyricList(lines) {
+  const list = $('#lyr-list'); list.innerHTML = ''; lyr.els = [];
+  list.style.transform = '';
+  (lines || []).forEach((l) => {
+    const d = document.createElement('div'); d.className = 'll';
+    const s = document.createElement('span'); s.className = 't'; s.textContent = l.line || '♪';
+    d.appendChild(s); list.appendChild(d); lyr.els.push(d);
+  });
+}
+function lyricsFollow(m) {
+  const key = (m.title || '') + '|' + (m.artist || '');
+  if (key !== lyr.key) {
+    lyr = { key, lines: null, pos: 0, at: 0, idx: -2, shown: -2, els: [] };
+    setLyric('');
+    island.style.animation = 'none';
+    renderLyricList(null);
+    lyrNote(!m.title ? 'Nothing playing' : 'Looking for lyrics...');
+    if (m.title) {
+      api.startupGet().then((s) => {
+        lyricsEnabled = s.lyrics !== false;
+        if (!lyricsEnabled && lyr.key === key) lyrNote('Lyrics are off (Settings > General)');
+      }).catch(() => {});
+      api.lyricsGet({ title: m.title, artist: m.artist || '', duration: m.end || 0 }).then((lines) => {
+        if (lyr.key !== key) return;
+        if (lines && lines.length) { lyr.lines = lines; renderLyricList(lines); lyrNote(''); lyricTick(); }
+        else if (lyricsEnabled) lyrNote('No lyrics found for this song');
+      }).catch(() => {});
+    }
+  }
+  if (m.pos !== undefined) { lyr.pos = m.pos; lyr.at = Date.now(); }
+  lyricTick();
+}
+function setLyric(t) {
+  if (t === lyricNow) return;
+  lyricNow = t;
+  refreshPill();
+}
+const lyrPos = () => lyr.pos + (playing ? (Date.now() - lyr.at) / 1000 : 0) + 0.2; // a little ahead: the pill takes a moment to show it
+// keep the sung line in the middle of the lyrics area
+function lyrScroll(i) {
+  const el = lyr.els[Math.max(0, i)];
+  if (!el) return;
+  const h = $('#lyrics').clientHeight;
+  $('#lyr-list').style.transform = `translateY(${Math.round(h * 0.42 - (el.offsetTop + el.offsetHeight / 2))}px)`;
+}
+function lyricTick() {
+  if (!lyricsEnabled || !lyr.lines) return setLyric('');
+  const now = lyrPos();
+  // a line becomes the big one a moment BEFORE its time (when the last words of the line before it are being sung), so the next words can be read
+  // early; its colour fill still begins only at its own time
+  let i = -1;
+  for (let k = 0; k < lyr.lines.length && lyr.lines[k].t - lyrLead(k - 1) <= now; k++) i = k;
+  if (i !== lyr.shown) {
+    lyr.shown = i;
+    lyr.els.forEach((el, k) => el.classList.toggle('cur', k === i));
+    lyrScroll(i);
+    startKara(i);
+  }
+  lyr.idx = i;
+  island.style.animationPlayState = playing ? 'running' : 'paused';
+  setLyric(playing && i >= 0 ? (lyr.lines[i].line || '♪') : '');
+}
+setInterval(lyricTick, 250);
+// the colour that fills the sung line is one CSS animation (--p) lasting as long as the line; it pauses with the music
+// how long before the next line the sung line is handed over: the last words of a line (about a fifth of it, at most 0.9 s)
+function lyrLead(k) {
+  const a = lyr.lines[k], b = lyr.lines[k + 1];
+  return 0; // (a line used to be handed over a little early; it follows the song exactly again)
+}
+function startKara(i) {
+  island.style.animation = 'none';
+  void island.offsetWidth;
+  if (i < 0 || !lyr.lines) return;
+  const a = lyr.lines[i], b = lyr.lines[i + 1];
+  const dur = Math.max(1.2, Math.min(b ? b.t - lyrLead(i) - a.t : 5, 9) * 0.92);
+  island.style.animation = `kara ${dur.toFixed(2)}s linear ${(a.t - lyrPos()).toFixed(2)}s both`; // a positive delay = the fill waits for the line's own time
+}
+// the pill is as wide as the lyric line it shows (a plain pill otherwise)
+function fitPill(text) {
+  if (MACOS && !pillRight) return;
+  let pw = 210;
+  if (text) {
+    measure.font = getComputedStyle($('#pill-text')).font;
+    pw = Math.max(210, Math.min(620, Math.ceil(measure.measureText(text).width) + 112 + 8));
+  }
+  if (pw === pillPw) return;
+  const grow = pw > pillPw;
+  pillPw = pw;
+  const ear = 12;
+  SIZES.compact[0] = pw + 2 * ear;
+  clearTimeout(pillTimer);
+  const apply = () => { if (isOpen) return; api.islandSize(...SIZES.compact); api.windowSize(...(toastOn ? toastSize() : SIZES.compact)); };
+  if (grow) { apply(); island.style.setProperty('--pw', pw + 'px'); }
+  else { island.style.setProperty('--pw', pw + 'px'); pillTimer = setTimeout(apply, 480); }
+}
+
+// top bar: your picture (or the logo), the link mark, the volume mixer
+// where the pill sits: in the middle, or to the right of the camera notch (on the Mac it is then a small pill like on Windows)
+function setPillPos(r, first) {
+  if (r === pillRight && !first) return;
+  pillRight = r;
+  document.body.classList.toggle('pr', r);
+  if (MACOS) { SIZES.compact[0] = r ? 234 : 464; SIZES.toast[0] = r ? 380 : 520; }
+  pillPw = 0;
+  if (!first) { refreshPill(); if (!isOpen) { api.islandSize(...SIZES.compact); api.windowSize(...SIZES.compact); } }
+}
+const applyLook = (l) => {
+  if (l && l.pillPos) setPillPos(l.pillPos === 'right');
+  document.documentElement.style.setProperty('--deco', (l && l.accent) || '#0a84ff');
+  const img = $('#avatar-img');
+  img.classList.toggle('logo', !(l && l.profile));
+  img.src = (l && l.profile) || '../assets/logo.png';
+};
+api.lookGet().then(applyLook).catch(() => {});
+api.onLook(applyLook);
+$('#avatar').onclick = () => { ui('home: picture clicked'); api.profileChoose(); };
+$('#top-link').onclick = () => showPage(2);
+
+// volume: the slider under the music is the volume of the whole computer; the mixer icon opens one slider for every program
+const throttle = (fn, ms) => { let t = 0, timer = null, last; return (...a) => { last = a; const w = ms - (Date.now() - t); if (w <= 0) { t = Date.now(); fn(...last); } else if (!timer) timer = setTimeout(() => { timer = null; t = Date.now(); fn(...last); }, w); }; };
+const volFill = (el) => el.style.setProperty('--v', el.value + '%');
+const sendMaster = throttle((v) => api.mixerMaster(v), 80);
+// macOS has no volume per program: its mixer shows the three system volumes instead
+$('#vol').addEventListener('input', (e) => { volFill(e.target); mixDrag = Date.now(); sendMaster(Number(e.target.value)); });
+const setVol = (v) => { if (Date.now() - mixDrag < 1500) return; $('#vol').value = v; volFill($('#vol')); };
+volFill($('#vol'));
+function mixerSync() { // reads the computer's volume now and then (not on every song update)
+  if (mixerOpen || Date.now() - mixSyncAt < 15000) return;
+  mixSyncAt = Date.now();
+  api.mixerList().then((r) => { if (r && r.master !== undefined) setVol(r.master); }).catch(() => {});
+}
+const appName = (n) => { n = String(n).replace(/\.exe$/i, ''); return n.charAt(0).toUpperCase() + n.slice(1); };
+const SPK = '<svg viewBox="0 0 24 24"><path d="M4 9.5h3l4.5-3.8v12.6L7 14.5H4z" style="fill:currentColor;stroke:none"/><path d="M15 9.3a4 4 0 0 1 0 5.4M17.6 6.7a7.6 7.6 0 0 1 0 10.6"/></svg>';
+const SPK_OFF = '<svg viewBox="0 0 24 24"><path d="M4 9.5h3l4.5-3.8v12.6L7 14.5H4z" style="fill:currentColor;stroke:none"/><path d="M15.5 9.5l5 5M20.5 9.5l-5 5"/></svg>';
+function renderMixer(r) {
+  const box = $('#mx-list');
+  if (!r || r.error || r.unsupported) { mixSig = ''; box.innerHTML = '<div id="mx-empty">' + (r && r.unsupported ? 'The mixer is for Windows' : 'The mixer is starting... or could not be read') + '</div>'; return; }
+  setVol(r.master);
+  const rows = MACOS ? [
+    { key: 'master', name: 'Output volume', vol: r.master, active: true, master: true },
+    { key: 'alert', name: 'Alert volume', vol: r.alert, active: true, mac: 'alert' },
+    { key: 'input', name: 'Microphone', vol: r.input, active: true, mac: 'input' },
+  ] : (r.apps || []).filter((x) => x.name !== "System sounds").sort((a, b) => (b.active - a.active) || a.name.localeCompare(b.name)).map((a) => ({ key: a.name, ...a }));
+  if (!rows.length) { mixSig = ""; box.innerHTML = "<div id=\"mx-empty\">No program is making sound right now. The volume of the whole computer is the slider under the music.</div>"; return; }
+  const sig = rows.map((x) => x.key).join('|');
+  if (sig !== mixSig) { // a program started or stopped playing: draw the rows again
+    mixSig = sig; box.innerHTML = '';
+    rows.forEach((x) => {
+      const row = document.createElement('div'); row.className = 'mx'; row.dataset.key = x.key;
+      const nm = document.createElement('b'); nm.textContent = MACOS ? x.name : appName(x.name); nm.title = nm.textContent;
+      const rg = document.createElement('input'); rg.type = 'range'; rg.min = 0; rg.max = 100;
+      const pc = document.createElement('span'); pc.className = 'pc';
+      const send = throttle((v) => (x.mac ? api.mixerMac(x.mac, v) : x.master ? api.mixerMaster(v) : api.mixerSet(x.name, v)), 80);
+      rg.addEventListener('input', () => { volFill(rg); pc.textContent = rg.value; mixDrag = Date.now(); if (x.master) { $('#vol').value = rg.value; volFill($('#vol')); } send(Number(rg.value)); });
+      row.append(nm, rg, pc);
+      if (!x.master && !x.mac) {
+        const mu = document.createElement('button'); mu.className = 'ico mu'; mu.title = 'Mute';
+        mu.onclick = async () => { const off = !mu.classList.contains('off'); mu.classList.toggle('off', off); mu.innerHTML = off ? SPK_OFF : SPK; await api.mixerMute(x.name, off); };
+        row.appendChild(mu);
+      } else { const sp = document.createElement('span'); sp.style.width = '28px'; sp.style.flex = 'none'; row.appendChild(sp); }
+      box.appendChild(row);
+    });
+  }
+  if (Date.now() - mixDrag < 1500) return; // do not move a slider that is being dragged
+  rows.forEach((x) => {
+    const row = [...box.children].find((c) => c.dataset.key === x.key);
+    if (!row) return;
+    const rg = row.querySelector('input'); rg.value = x.vol; volFill(rg);
+    row.querySelector('.pc').textContent = x.vol;
+    row.querySelector('b').classList.toggle('idle', !x.active);
+    const mu = row.querySelector('.mu'); if (mu) { mu.classList.toggle('off', !!x.muted); mu.innerHTML = x.muted ? SPK_OFF : SPK; }
+  });
+}
+let mixBusy = false;
+async function mixerRefresh() {
+  if (mixBusy) return;
+  mixBusy = true;
+  try { renderMixer(await api.mixerList()); } catch {}
+  mixBusy = false;
+}
+function closeMixer() {
+  mixerOpen = false; mixSig = '';
+  $('#mixer').hidden = true; $('#top-mixer').classList.remove('on');
+  clearInterval(mixTimer); mixTimer = null;
+}
+$('#top-mixer').onclick = () => {
+  if (mixerOpen) return closeMixer();
+  ui('home: mixer opened');
+  showPage(0);
+  mixerOpen = true;
+  $('#mixer').hidden = false; $('#top-mixer').classList.add('on');
+  $('#mx-list').innerHTML = '<div id="mx-empty">Reading the volumes...</div>';
+  mixerRefresh();
+  mixTimer = setInterval(mixerRefresh, 2500);
+};
+$('#mixer-x').onclick = closeMixer;
+
+// Link page, while a computer is linked: Look to switch and its calibration (they used to sit on the home page)
+let gazeNow = { enabled: false }, nookLinked = false;
+const renderGazeRow = () => {
+  const g = gazeNow;
+  $('#lk-gaze').hidden = !nookLinked;
+  $('#lk-cal').textContent = !g.enabled ? 'Calibrate' : g.calibrating ? 'Calibrating...' : g.calibrated ? 'Recalibrate' : 'Calibrate';
+  $('#lk-gaze-sw').classList.toggle('on', !!g.enabled);
+  $('#lk-gaze-sw').setAttribute('aria-checked', g.enabled ? 'true' : 'false');
+};
+api.onGaze((g) => { gazeNow = g; renderGazeRow(); });
+api.gazeGet().then((g) => { gazeNow = g; renderGazeRow(); });
+api.onLink((st) => { nookLinked = !!st.connected; renderGazeRow(); });
+api.linkStatus().then((st) => { nookLinked = !!st.connected; renderGazeRow(); });
+$('#lk-cal').onclick = async () => {
+  ui('link: calibrate clicked');
+  if (!nookLinked) return;
   if (!gazeNow.enabled) { await api.gazeSet(true); setTimeout(() => api.gazeCalibrate(), 2500); return; }
   api.gazeCalibrate();
 };
-$('#nook-gaze-sw').onclick = () => { ui('home: look to switch ' + (gazeNow.enabled ? 'off' : 'on')); api.gazeSet(!gazeNow.enabled); };
-
-// the dot on the Pick color button shows the last color
-api.colorsGet().then((list) => setLastColor(list[0]));
-api.onColors((list) => setLastColor(list[0]));
-function setLastColor(last) { $('#nook-pick').style.setProperty('--dot', last || 'transparent'); $('#nook-pick').classList.toggle('has', !!last); }
-$('#nook-pick').onclick = () => { ui('home: pick color clicked'); api.colorPick(); };
+$('#lk-gaze-sw').onclick = () => { ui('link: look to switch ' + (gazeNow.enabled ? 'off' : 'on')); api.gazeSet(!gazeNow.enabled); };

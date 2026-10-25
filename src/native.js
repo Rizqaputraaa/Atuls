@@ -165,6 +165,26 @@ function winModsHeld() {
   } catch { return false; }
 }
 
+// Windows: does the system think this key / mouse button (virtual key code) is down right now?
+function winKeyDown(vk) {
+  const api = loadWin();
+  if (!api) return false;
+  try {
+    if (!asyncKey) asyncKey = api.user32.func('int16_t __stdcall GetAsyncKeyState(int vk)');
+    return (asyncKey(vk) & 0x8000) !== 0;
+  } catch { return false; }
+}
+
+// Windows: are Ctrl and Alt both down? (they are never swallowed, so the system knows)
+function winCtrlAlt() {
+  const api = loadWin();
+  if (!api) return false;
+  try {
+    if (!asyncKey) asyncKey = api.user32.func('int16_t __stdcall GetAsyncKeyState(int vk)');
+    return (asyncKey(0x11) & 0x8000) !== 0 && (asyncKey(0x12) & 0x8000) !== 0;
+  } catch { return false; }
+}
+
 // shouldBlock(kbdStruct) -> true swallows the keystroke
 const installKeyBlocker = (shouldBlock) => installHook(13 /* WH_KEYBOARD_LL */, 'KBD', (_msg, k) => shouldBlock(k));
 // decide(message, { x, y, mouseData, flags }) -> true swallows the mouse event (flags & 1 = injected)
@@ -411,6 +431,77 @@ function scaleWheel(event, f) {
   scaleI(96); scaleI(97); // point deltas (pixels)
   scaleD(93); scaleD(94); // fixed-point deltas
   scaleI(11); scaleI(12); // line deltas
+}
+// macOS, master mode: while this computer is not the master, everything the real mouse and keyboard do is swallowed. A second tap is
+// made only while it is needed (a tap that sees every mouse move costs CPU). Events posted by a program (field 41 = the process that posted
+// it: 0 for real hardware) go through, so the master can still steer this computer. Ctrl+Option held lets keys through (the shortcut to take over).
+// while locked the pointer must stay disconnected from the real mouse; the system or the page may connect it again (pointer lock changes), so it is said again
+function reassertMouseFree() { if (blockTap && blockTap.blocking) { try { blockTap.assoc(false); } catch {} } }
+// development test: connect / disconnect the real mouse and the cursor (false = the mouse no longer moves the cursor)
+function macAssociate(connected) {
+  try { const app = koffi.load('/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices'); return app.func('int CGAssociateMouseAndMouseCursorPosition(bool connected)')(!!connected); } catch (e) { return 'failed ' + e.message; }
+}
+let blockTap = null; // made once, then only switched on and off (making and removing it again and again left a tap behind that kept swallowing the mouse)
+function setPhysicalBlock(on) {
+  if (process.platform !== 'darwin' || !koffi) return false;
+  try {
+    if (!blockTap) {
+      if (!on) return true; // nothing to switch off yet
+      const app = koffi.load('/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices');
+      const cf = koffi.load('/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation');
+      const Cb = koffi.proto('void *BlockTapCb(void *proxy, uint32_t type, void *event, void *info)');
+      const create = app.func('void *CGEventTapCreate(uint32_t tap, uint32_t place, uint32_t options, uint64_t mask, BlockTapCb *cb, void *info)');
+      const enable = app.func('void CGEventTapEnable(void *tap, bool on)');
+      const getInt = app.func('int64_t CGEventGetIntegerValueField(void *event, uint32_t field)');
+      const getFlags = app.func('uint64_t CGEventGetFlags(void *event)');
+      const assoc = app.func('int CGAssociateMouseAndMouseCursorPosition(bool connected)'); // false: the real mouse stops moving the cursor (events posted by programs still do)
+      const makeSource = cf.func('void *CFMachPortCreateRunLoopSource(void *alloc, void *port, int64_t order)');
+      const mainLoop = cf.func('void *CFRunLoopGetMain()');
+      const addSource = cf.func('void CFRunLoopAddSource(void *rl, void *source, void *mode)');
+      const commonModes = koffi.decode(cf.symbol('kCFRunLoopCommonModes', 'void *'), 'void *');
+      const cg = () => loadCG();
+      const st = { port: null, enable, assoc, blocking: false, hold: null, stats: { seen: 0, swallowed: 0, prog: 0, first: [] } };
+      const cb = koffi.register((_proxy, type, event) => {
+        try {
+          if (type === 0xfffffffe || type === 0xffffffff) { if (st.blocking) enable(st.port, true); return event; } // the system switched the tap off: switch it back on
+          if (!st.blocking) return event;
+          st.stats.seen++;
+          const pid = Number(getInt(event, 41)); // the process that posted the event: 0 for the real hardware
+          if (st.stats.first.length < 8) st.stats.first.push(type + ':' + pid);
+          const isMove = type === 5 || type === 6 || type === 7 || type === 27;
+          if (pid !== 0) { // posted by a program: the master steering this computer; where it puts the pointer is where the pointer stays
+            st.stats.prog++;
+            if (isMove) { try { const p = cg().location(event); st.hold = { x: p.x, y: p.y }; } catch {} }
+            return event;
+          }
+          if (isMove && st.hold) { try { cg().warp(st.hold); } catch {} } // the real mouse moved: put the pointer straight back (swallowing the event alone does not stop the cursor)
+          if (type === 12) return event; // a modifier key on its own does nothing
+          if (type === 10 || type === 11) { const f = Number(getFlags(event)); if ((f & 0x40000) && (f & 0x80000)) return event; } // Ctrl+Option: the take-over shortcut
+          st.stats.swallowed++;
+          return null;
+        } catch { return event; }
+      }, koffi.pointer(Cb));
+      let mask = 0n;
+      for (const t of [1, 2, 3, 4, 5, 6, 7, 10, 11, 22, 25, 26, 27]) mask |= 1n << BigInt(t);
+      st.port = create(1 /* session */, 0 /* head */, 0 /* active */, mask, cb, null);
+      if (!st.port) { console.error('[island] master: the lock could not be made (Accessibility permission?)'); return false; }
+      addSource(mainLoop(), makeSource(null, st.port, 0), commonModes);
+      enable(st.port, false); // off until needed
+      st.cb = cb;
+      st.log = setInterval(() => { if (st.blocking && st.stats.seen) console.log('[island] master lock: seen ' + st.stats.seen + ', swallowed ' + st.stats.swallowed + ', from programs ' + st.stats.prog + ', first ' + st.stats.first.join(' ')); }, 4000);
+      if (st.log.unref) st.log.unref();
+      process.once('exit', () => { try { enable(st.port, false); assoc(true); } catch {} });
+      blockTap = st;
+    }
+    if (blockTap.blocking === !!on) return true;
+    blockTap.blocking = !!on;
+    blockTap.hold = on ? macMouse.pos() : null; // where the pointer is when the lock starts
+    blockTap.stats = { seen: 0, swallowed: 0, prog: 0, first: [] };
+    blockTap.enable(blockTap.port, !!on);
+    blockTap.assoc(!on);
+    console.log(on ? '[island] master: this computer\'s mouse and keyboard are locked (the other computer is the master)' : '[island] master: this computer\'s mouse and keyboard are free again');
+    return true;
+  } catch (e) { console.error('[island] master lock failed:', e.message); return false; }
 }
 function installScrollTap(onScroll) {
   if (scrollTap || process.platform !== 'darwin' || !koffi) return false;
@@ -694,8 +785,11 @@ function macMediaKey(name) {
   } catch (e) { console.error('[island] media key failed:', e.message); return false; }
 }
 
+const macMovePost = (x, y, heldButton) => macPost(heldButton && CG_BUTTON[heldButton] ? CG_BUTTON[heldButton].drag : 5, x, y, heldButton && CG_BUTTON[heldButton] ? CG_BUTTON[heldButton].n : 0);
 const macMouse = {
   // is the left button held down right now (a drag is under way)
+  // is this button (0 left, 1 right, 2 middle) held, read from the hardware state: it does not depend on events being delivered
+  buttonHeld: (b) => { try { const api = loadCG(); if (!api.btn) api.btn = koffi.load('/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices').func('bool CGEventSourceButtonState(int32_t state, uint32_t button)'); return !!api.btn(1, b); } catch { return false; } },
   leftDown: () => { try { const api = loadCG(); if (!api.btn) api.btn = koffi.load('/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices').func('bool CGEventSourceButtonState(int32_t state, uint32_t button)'); if (api.btn(1, 0)) return true; } catch {}
     // CGEventSourceButtonState reads false for real drags on some Macs: ask AppKit for the held buttons too (bit 0 = left)
     try { const o = loadObjc(); return !!(o && (Number(o.i0(o.cls('NSEvent'), o.sel('pressedMouseButtons'))) & 1)); } catch { return false; } },
@@ -762,7 +856,7 @@ const macMouse = {
       return true;
     } catch (e) { console.error('[island] scroll failed:', e.message); return false; }
   },
-  move: (x, y, heldButton) => macPost(heldButton && CG_BUTTON[heldButton] ? CG_BUTTON[heldButton].drag : 5, x, y, heldButton && CG_BUTTON[heldButton] ? CG_BUTTON[heldButton].n : 0),
+  move: (x, y, heldButton) => { if (blockTap && blockTap.blocking) blockTap.hold = { x, y }; return macMovePost(x, y, heldButton); },
   down: (b, x, y, state) => CG_BUTTON[b] && macPost(CG_BUTTON[b].down, x, y, CG_BUTTON[b].n, state || 1),
   up: (b, x, y, state) => CG_BUTTON[b] && macPost(CG_BUTTON[b].up, x, y, CG_BUTTON[b].n, state || 1),
 };
@@ -789,4 +883,26 @@ function winClipboardSeq() {
   } catch { return null; }
 }
 
-module.exports = { winClipboardSeq, macInputMonitoring, macDisplaySizes, winMonitorSizes, refreshWinMonitorSizes, matchSizes, reinstallHooks, removeHooks, winIdleMs, winModsHeld, installScrollTap, highResTimer, winCursor, setCursorHidden, installKeyBlocker, installMouseHook, macMouse, macMediaKey, macDragFiles, screenPixels, macHotKeyInfo, macPostHotKey, loadWin: () => loadWin() };
+// Windows: is a game or another full-screen program in front? (the same flag that makes Windows hold back its own notifications)
+// 2 = a full-screen program, 3 = a full-screen Direct3D game, 4 = a presentation, 5 = normal desktop use
+let quns = null;
+function winUserState() {
+  if (process.platform !== 'win32' || !koffi) return null;
+  try {
+    if (!quns) quns = koffi.load('shell32.dll').func('int __stdcall SHQueryUserNotificationState(_Out_ int *state)');
+    const out = [0];
+    return quns(out) === 0 ? out[0] : null;
+  } catch { return null; }
+}
+// Windows: is the left mouse button down right now? (read without a hook)
+let lbtn = null;
+function winLeftDown() {
+  const api = loadWin();
+  if (!api) return false;
+  try {
+    if (!lbtn) lbtn = api.user32.func('int16_t __stdcall GetAsyncKeyState(int vKey)');
+    return (lbtn(1) & 0x8000) !== 0;
+  } catch { return false; }
+}
+
+module.exports = { reassertMouseFree, macAssociate, winKeyDown, setPhysicalBlock, winCtrlAlt, winUserState, winLeftDown, winClipboardSeq, macInputMonitoring, macDisplaySizes, winMonitorSizes, refreshWinMonitorSizes, matchSizes, reinstallHooks, removeHooks, winIdleMs, winModsHeld, installScrollTap, highResTimer, winCursor, setCursorHidden, installKeyBlocker, installMouseHook, macMouse, macMediaKey, macDragFiles, screenPixels, macHotKeyInfo, macPostHotKey, loadWin: () => loadWin() };

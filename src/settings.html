@@ -7,8 +7,12 @@
   :root { --bg: #141416; --panel: #1c1c1f; --panel2: #232327; --line: #2f2f34; --fg: #f2f2f7; --dim: #9a9aa2; --accent: #0a84ff; --good: #30d158; --bad: #ff453a; --ease: cubic-bezier(.32, .72, 0, 1); }
   * { box-sizing: border-box; margin: 0; }
   html, body { height: 100%; background: var(--bg); color: var(--fg); font: 13px -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
-  #app { display: flex; height: 100%; }
-  aside { width: 210px; flex: none; background: #101012; border-right: 1px solid var(--line); padding: 22px 12px 16px; display: flex; flex-direction: column; }
+  html, body { overflow: hidden; } /* only the page (main) scrolls: one scrollbar, not two */
+  #app { display: flex; height: 100vh; overflow: hidden; }
+  main::-webkit-scrollbar { width: 8px; }
+  main::-webkit-scrollbar-thumb { background: #3a3a3f; border-radius: 4px; }
+  main::-webkit-scrollbar-track { background: transparent; }
+  aside { overflow-y: auto; width: 210px; flex: none; background: #101012; border-right: 1px solid var(--line); padding: 22px 12px 16px; display: flex; flex-direction: column; }
   aside h1 { font-size: 16px; padding: 0 10px 18px; }
   aside button { display: flex; align-items: center; gap: 10px; width: 100%; padding: 9px 12px; margin-bottom: 3px; border: 0; border-radius: 10px; background: transparent; color: var(--dim); font: inherit; font-size: 13.5px; cursor: pointer; text-align: left; }
   aside button:hover { background: #1b1b1e; color: var(--fg); }
@@ -17,7 +21,7 @@
   aside .grp { color: #6f6f78; font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase; padding: 14px 12px 6px; }
   aside .foot { margin-top: auto; padding: 10px; color: var(--dim); font-size: 11px; display: flex; align-items: center; gap: 8px; }
   aside .foot img { width: 16px; opacity: .7; }
-  main { flex: 1; overflow-y: auto; padding: 26px 34px 40px; }
+  main { flex: 1; min-width: 0; height: 100%; overflow-y: auto; padding: 26px 34px 40px; }
   main h2 { font-size: 20px; margin-bottom: 4px; }
   main .sub { color: var(--dim); margin-bottom: 20px; }
   .group { color: var(--dim); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; margin: 22px 0 8px; }
@@ -110,6 +114,7 @@
     <div class="grp">Tools</div>
     <button data-p="color"><svg viewBox="0 0 24 24"><path d="M14.5 5.5l4 4"/><path d="M16.5 3.5a2 2 0 0 1 3 3l-2 2-3-3z"/><path d="M14.5 8.5L5 18l-1 3 3-1 9.5-9.5"/></svg>Color picker</button>
     <button data-p="sharing"><svg viewBox="0 0 24 24"><path d="M4 12v7h16v-7M12 3v12M7 8l5-5 5 5"/></svg>Sharing</button>
+    <button data-p="calendar"><svg viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="15" rx="2.5"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg>Calendar</button>
     <button data-p="diagnostics"><svg viewBox="0 0 24 24"><path d="M4 18l4-6 3 3 4-8 5 11"/></svg>Diagnostics</button>
     <div class="foot"><img src="assets/logo.png" alt="">A-tuls · this computer</div>
   </aside>
@@ -438,6 +443,31 @@ function pageGeneral() {
           h('input', { type: 'color', title: 'Rings', value: (G.splashColors && G.splashColors.c2) || '#ffffff', onchange: async (e) => { S.startup = await A.startupSet({ splashColors: { c1: (S.startup.splashColors && S.startup.splashColors.c1) || '', c2: e.target.value } }); toast('Saved'); } }),
           h('button', { class: 'btn', onclick: () => A.splashTest() }, 'Preview'),
           h('button', { class: 'btn', onclick: async () => { S.startup = await A.startupSet({ splashColors: { c1: '', c2: '' } }); toast('Back to the default colors'); draw(); } }, 'Reset'))),
+      row('Pill position', 'Where the pill sits at the top of this screen. Right keeps it clear of the camera notch (MacBook) and of the browser tabs in the middle.',
+        h('div', { class: 'seg' }, ...[['center', 'Center'], ['right', 'Right']].map(([v, l]) => h('button', { class: (((S.look && S.look.pillPos) || 'center') === v) ? 'on' : '', onclick: async () => { S.look = await A.lookPos(v); toast('Saved'); draw(); } }, l)))),
+      row('Ignore media from', 'Words in the title, artist or program name of media that must NOT show as music: add instagram or tiktok and scrolling those pages in the browser no longer replaces the song (and its lyrics) that is playing.',
+        h('div', { style: 'display:flex;flex-direction:column;gap:8px;align-items:flex-end;max-width:300px' },
+          h('div', { style: 'display:flex;gap:8px' },
+            h('input', { class: 'txt', id: 'mb-in', placeholder: 'instagram', style: 'width:150px', onkeydown: async (e) => { if (e.key === 'Enter') document.getElementById('mb-add').click(); } }),
+            h('button', { class: 'btn', id: 'mb-add', onclick: async () => { const v = document.getElementById('mb-in').value.trim(); if (!v) return; S.mediaBlock = await A.mediaBlockSet([...(S.mediaBlock || []), v]); toast('Saved'); draw(); } }, 'Add')),
+          h('div', { style: 'display:flex;flex-wrap:wrap;gap:6px;justify-content:flex-end' }, ...(S.mediaBlock || []).map((w) => h('button', { class: 'btn', title: 'Remove', onclick: async () => { S.mediaBlock = await A.mediaBlockSet((S.mediaBlock || []).filter((x) => x !== w)); toast('Saved'); draw(); } }, w + ' \u2715'))))),
+      row('Notification sounds', 'A short tone for each kind of notice: sent, received, connected, a problem and a screenshot. It stays silent while the pill is hidden in a game.',
+        h('div', { style: 'display:flex;gap:10px;align-items:center' },
+          h('input', { type: 'range', min: 0, max: 100, value: G.soundVol === undefined ? 60 : G.soundVol, style: 'width:110px', onchange: async (e) => { S.startup = await A.startupSet({ soundVol: Number(e.target.value) }); A.soundTest('ok'); } }),
+          h('select', { class: 'txt', id: 'snd-kind' }, ...[['ok', 'Done'], ['sent', 'Sent'], ['received', 'Received'], ['connected', 'Connected'], ['err', 'Problem'], ['shot', 'Screenshot'], ['impact', 'Screen switch']].map(([v, l]) => h('option', { value: v }, l))),
+          h('button', { class: 'btn', onclick: () => A.soundTest(document.getElementById('snd-kind').value) }, 'Play'),
+          toggle(G.sound !== false, async (v) => { S.startup = await A.startupSet({ sound: v }); toast('Saved'); }))),
+      row('Hide in games', 'The pill hides itself while a game or another full-screen program is in front (Dota, a full-screen video, a slideshow) and comes back when you leave it.', toggle(G.gameHide !== false, async (v) => { S.startup = await A.startupSet({ gameHide: v }); toast('Saved'); })),
+      row('Hide the pill', 'Hide or show the pill by hand. The shortcut Ctrl+Alt+H and the tray icon menu do the same.', toggle(!!G.pillOff, async (v) => { S.startup = await A.startupSet({ pillOff: v }); toast('Saved'); })),
+      row('Your picture', 'Shown in the top corner of the home page instead of the A-tuls logo. Click the picture there to change it too.',
+        h('div', { style: 'display:flex;gap:10px;align-items:center' },
+          h('button', { class: 'btn', onclick: async () => { await A.profileChoose(); toast('Saved'); } }, 'Choose picture'),
+          h('button', { class: 'btn', onclick: async () => { await A.profileReset(); toast('Back to the logo'); } }, 'Use the logo'))),
+      row('Decoration color', 'The glow under the music on the home page and the small accents around it.',
+        h('div', { style: 'display:flex;gap:10px;align-items:center' },
+          h('input', { type: 'color', value: (S.look && S.look.accent) || '#0a84ff', onchange: async (e) => { S.look = await A.lookAccent(e.target.value); toast('Saved'); } }),
+          h('button', { class: 'btn', onclick: async () => { S.look = await A.lookAccent(''); toast('Back to blue'); draw(); } }, 'Reset'))),
+      row('Lyrics in the pill', 'While a song plays, the line that is being sung shows in the small pill, and the pill is as wide as the line. It asks lrclib.net for the lyrics: only the title, artist and length of the song are sent. Works with YouTube, Spotify and other players that show up in the Windows media controls.', toggle(G.lyrics !== false, async (v) => { S.startup = await A.startupSet({ lyrics: v }); })),
       row('Screen-edge effect', 'A flash, a glow and rings on the edge of the one screen that becomes active when the pointer (or your head) moves control to this computer.',
         h('div', { style: 'display:flex;gap:10px;align-items:center' }, h('button', { class: 'btn', onclick: () => A.fxTest() }, 'Preview'), toggle(G.edgeFx !== false, async (v) => { S.startup = await A.startupSet({ edgeFx: v }); toast('Saved'); }))),
       row('Updates', updText(), h('div', { style: 'display:flex;gap:10px;align-items:center' },
@@ -460,8 +490,41 @@ function pageDiagnostics() {
   ];
 }
 
+
+// ---------------------------------------------------------------- calendar
+// Google Calendar (and with it Android) and iCloud (iPhone) can each give out a secret link to a calendar in the iCal format. A-tuls reads the
+// link, shows the events on the home page, and refreshes them every 15 minutes. Nothing is sent anywhere; the links are kept sealed on this computer.
+let calList = [], calMsg = '', calBusy = false;
+const calReload = async () => { try { calList = await A.calSources(); } catch {} if (page === 'calendar') draw(); };
+function pageCalendar() {
+  const name = h('input', { placeholder: 'Name (optional), e.g. Work', maxlength: 40 });
+  const url = h('input', { placeholder: 'Paste the calendar link (https:// or webcal://)', style: 'flex:2' });
+  const add = async () => {
+    if (calBusy) return;
+    calBusy = true; calMsg = 'Checking the link...'; draw();
+    const r = await A.calAdd(name.value, url.value);
+    calBusy = false; calMsg = r.ok ? 'Added' : r.error;
+    await calReload(); draw();
+  };
+  return [
+    h('h2', {}, 'Calendar'), h('div', { class: 'sub' }, 'Show your Google, Android or iPhone calendar on the home page.'),
+    h('div', { class: 'card' },
+      calList.length
+        ? calList.map((c) => row(c.name, c.ok ? (c.count + ' events in the next weeks' + (c.at ? ', updated ' + new Date(c.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '')) : 'Problem: ' + c.error,
+          h('button', { class: 'btn', onclick: async () => { calList = await A.calRemove(c.id); draw(); } }, 'Remove')))
+        : row('No calendar yet', 'Add one below.', null),
+      row('Add a calendar', calMsg || 'The link is secret: anybody who has it can read that calendar.', h('div', { class: 'row', style: 'gap:8px;flex:1;justify-content:flex-end' }, name, url, h('button', { class: 'btn primary', disabled: calBusy, onclick: add }, 'Add'))),
+      row('Update now', 'Calendars update by themselves every 15 minutes.', h('button', { class: 'btn', disabled: calBusy, onclick: async () => { calBusy = true; draw(); calList = await A.calRefresh(); calBusy = false; draw(); } }, 'Refresh'))),
+    h('div', { class: 'card' },
+      h('div', { class: 'row' }, h('div', { class: 't' }, h('b', {}, 'Google Calendar and Android'),
+        h('span', {}, 'On a computer open calendar.google.com. Settings (the gear) > pick the calendar on the left > Integrate calendar > copy "Secret address in iCal format". Android phones show the same Google calendar, so this is the one for them too.'))),
+      h('div', { class: 'row' }, h('div', { class: 't' }, h('b', {}, 'iPhone (iCloud)'),
+        h('span', {}, 'In the Calendar app tap Calendars, then the (i) next to a calendar, switch on Public Calendar, and copy the link. It starts with webcal://. Only that calendar is shared through the link; switch Public Calendar off to stop.')))),
+  ];
+}
+
 // ---------------------------------------------------------------- shell
-const PAGES = { general: pageGeneral, pointer: pagePointer, scrolling: pageScrolling, buttons: pageButtons, shortcuts: pageShortcuts, activation: pageActivation, appearance: pageAppearance, workspaces: pageWorkspaces, color: pageColor, sharing: pageSharing, diagnostics: pageDiagnostics };
+const PAGES = { calendar: pageCalendar, general: pageGeneral, pointer: pagePointer, scrolling: pageScrolling, buttons: pageButtons, shortcuts: pageShortcuts, activation: pageActivation, appearance: pageAppearance, workspaces: pageWorkspaces, color: pageColor, sharing: pageSharing, diagnostics: pageDiagnostics };
 function draw() {
   document.querySelectorAll('aside button').forEach((b) => b.classList.toggle('on', b.dataset.p === page));
   const y = $main.scrollTop;
@@ -475,10 +538,12 @@ document.querySelectorAll('aside button').forEach((b) => b.addEventListener('cli
 A.onGaze((g) => { if (!S) return; S.gaze = g; updateGaze(); });
 A.onColors((l) => { if (!S) return; S.colors = l; if (page === 'color') draw(); });
 A.onPerm((ok) => { if (!S) return; S.perm = ok; draw(); });
+A.onCal((l) => { calList = l; if (S && page === 'calendar') draw(); });
+calReload();
 A.updGet().then((u) => { U = u; if (S) draw(); }).catch(() => {});
 A.onUpdate((u) => { U = u; if (S && page === 'general') draw(); });
-Promise.all([window.rs.load(), A.startupGet(), A.prefsGet(), A.scrollGet(), A.tuneGet(), A.btnmapGet(), A.hotkeysGet(), A.clipGet(), A.shotGet(), A.gazeGet(), A.colorsGet(), A.permGet()]).then(([rs, startup, prefs, scroll, tune, map, hotkeys, clip, shot, gaze, colors, perm]) => {
-  S = { ...rs, startup, prefs, scroll, tune, map, hotkeys, hkRows: hotkeys.map((x) => ({ ...x })), clip, shot, gaze, colors, perm };
+Promise.all([window.rs.load(), A.startupGet(), A.prefsGet(), A.scrollGet(), A.tuneGet(), A.btnmapGet(), A.hotkeysGet(), A.clipGet(), A.shotGet(), A.gazeGet(), A.colorsGet(), A.permGet(), A.lookGet(), A.mediaBlockGet()]).then(([rs, startup, prefs, scroll, tune, map, hotkeys, clip, shot, gaze, colors, perm, look, mediaBlock]) => {
+  S = { ...rs, look, mediaBlock, startup, prefs, scroll, tune, map, hotkeys, hkRows: hotkeys.map((x) => ({ ...x })), clip, shot, gaze, colors, perm };
   const want = new URLSearchParams(location.search).get('p');
   if (want && PAGES[want]) page = want; else page = 'general';
   A.log('settings window opened on ' + page);

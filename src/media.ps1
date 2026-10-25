@@ -26,14 +26,34 @@ function Seek($sess, [double]$secs) {
   $null = Await ($sess.TryChangePlaybackPositionAsync([long]($pos * 10000000))) ([bool])
 }
 
+# Things the user does not want to count as music (a page such as Instagram or TikTok in the browser): words that are looked for in the title, the artist and
+# the name of the program. A session that matches is skipped, so the music underneath keeps showing. The words come in ATULS_MEDIA_BLOCK, separated by |.
+$script:block = @(([string]$env:ATULS_MEDIA_BLOCK).ToLower().Split('|') | Where-Object { $_ })
+function PropsOf($sess) { Await ($sess.TryGetMediaPropertiesAsync()) ([Windows.Media.Control.GlobalSystemMediaTransportControlsSessionMediaProperties]) }
+function IsBlocked($sess, $p) {
+  if (-not $script:block.Count) { return $false }
+  $hay = ("$($p.Title) $($p.Artist) $($sess.SourceAppUserModelId)").ToLower()
+  foreach ($b in $script:block) { if ($hay.Contains($b)) { return $true } }
+  return $false
+}
+# the session to show and to drive: the current one, unless it is blocked, then the first other one that is not
+function PickSession {
+  $cur = $script:mgr.GetCurrentSession()
+  $list = @()
+  if ($cur) { $list += $cur }
+  if ($script:block.Count) { foreach ($x in $script:mgr.GetSessions()) { if (-not $cur -or $x.SourceAppUserModelId -ne $cur.SourceAppUserModelId) { $list += $x } } }
+  foreach ($x in $list) { try { $px = PropsOf $x; if (-not (IsBlocked $x $px)) { return @{ s = $x; p = $px } } } catch {} }
+  return $null
+}
+
 function Poll {
-  $s = $script:mgr.GetCurrentSession()
-  if (-not $s) { $script:last = ''; return '{}' }
-  $p = Await ($s.TryGetMediaPropertiesAsync()) ([Windows.Media.Control.GlobalSystemMediaTransportControlsSessionMediaProperties])
+  $pick = PickSession
+  if (-not $pick) { if ($script:mgr.GetCurrentSession()) { return '{"blocked":true}' } $script:last = ''; return '{}' } # something plays but the user ignores it: say so, the music that was showing stays
+  $s = $pick.s; $p = $pick.p
   $info = $s.GetPlaybackInfo()
   $o = @{ title = $p.Title; artist = $p.Artist; status = "$($info.PlaybackStatus)"; canPrev = [bool]$info.Controls.IsPreviousEnabled; canNext = [bool]$info.Controls.IsNextEnabled }
   # the cover is read only when the track changed (the app remembers the last one)
-  try { $tl = $s.GetTimelineProperties(); $po = $tl.Position.TotalSeconds; if ("$($info.PlaybackStatus)" -eq 'Playing') { $po += ([DateTimeOffset]::Now - $tl.LastUpdatedTime).TotalSeconds }; $o.pos = [int]$po; $o.end = [int]$tl.EndTime.TotalSeconds } catch {}
+  try { $tl = $s.GetTimelineProperties(); $po = $tl.Position.TotalSeconds; if ("$($info.PlaybackStatus)" -eq 'Playing') { $po += ([DateTimeOffset]::Now - $tl.LastUpdatedTime).TotalSeconds }; $o.pos = [math]::Round($po, 2); $o.end = [math]::Round($tl.EndTime.TotalSeconds, 1) } catch {}
   $key = "$($p.Title)|$($p.Artist)"
   if ($key -ne $script:last) {
     $script:last = $key
@@ -62,7 +82,7 @@ if ($Loop) {
     try {
       $c = $cmd.Trim()
       if ($c -eq 'play' -or $c -eq 'next' -or $c -eq 'prev') {
-        $cur = $script:mgr.GetCurrentSession()
+        $pk = PickSession; $cur = if ($pk) { $pk.s } else { $null }
         if ($cur) {
           if ($c -eq 'play') { $null = Await ($cur.TryTogglePlayPauseAsync()) ([bool]) }
           elseif ($c -eq 'next') { if ($cur.GetPlaybackInfo().Controls.IsNextEnabled) { $null = Await ($cur.TrySkipNextAsync()) ([bool]) } else { Seek $cur 10 } }

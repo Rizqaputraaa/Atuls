@@ -54,6 +54,9 @@ class Link extends EventEmitter {
     this.id = store.get('deviceId', null) || (() => { const v = crypto.randomBytes(8).toString('hex'); store.set('deviceId', v); return v; })();
     this.offsets = store.get('offsets', {}); // device id -> position of its screens in the shared plane
     this.store = store;
+    // master mode is ON by default. id '' = not chosen yet: the first computer that is calibrated for Look to switch becomes the master, until then the
+    // Windows PC (or, between two of the same kind, the one with the lower id). A choice made in the Link tab ('auto' false) is kept.
+    this._m = store.get('master', null) || { on: true, id: '', auto: true, calMaster: false, at: 0 }; // cached: it is asked for on every mouse event
     this.pin = randomPin();
     this.sock = null;
     this.peerName = null;
@@ -176,7 +179,44 @@ class Link extends EventEmitter {
       peerId: this.peer && this.peer.id,
       peerSide: this.peer && this.peer.displays.length && this.myDisplays.length ? L.sideOf(this.myDisplays, this.myOff(), this.peer.displays, this.peerOff()) : this.peerSide,
       state: this.state,
+      master: { on: !!this._m.on, id: this.masterId(), auto: !!this._m.auto, mine: !!this.masterId() && this.masterId() === this.id, peer: !!this.peer && this.masterId() === this.peer.id, locked: this.lockedOut() },
     };
+  }
+
+  // ---- master: one computer owns the mouse and keyboard of both. The other one ignores its own mouse and keyboard (hooks swallow them)
+  // for as long as the link is alive and the master is that very peer. Safety: the lock ends at once when the link drops, when the other
+  // computer has been silent for 5 s, when master mode is switched off, or when the panic shortcut is used.
+  // who is the master right now ('' = master mode is off, or there is nobody to share with)
+  masterId() {
+    const m = this._m;
+    if (!m.on) return '';
+    if (m.id) return m.id;
+    if (!this.peer) return '';
+    const mineWin = process.platform === 'win32', peerWin = this.peer.plat === 'win32';
+    if (mineWin !== peerWin) return mineWin ? this.id : this.peer.id;
+    return this.id < this.peer.id ? this.id : this.peer.id;
+  }
+  lockedOut() {
+    const mid = this.masterId();
+    return !!(mid && mid !== this.id && this.sock && this.peer && this.peer.id === mid && Date.now() - this.lastRx < 5000);
+  }
+  // this computer has just been calibrated for Look to switch: if nobody has been made master on purpose or by an earlier calibration, it is the master
+  onCalibrated() {
+    if (this._m.on && this._m.auto && !this._m.calMaster) this.setMaster(true, this.id, { auto: true, calMaster: true });
+  }
+  followsMaster() { return !!(this.sock && this.peer && this.masterId() === this.peer.id); } // the other computer is the master
+  iAmMaster() { return !!(this.sock && this.masterId() === this.id); }
+  setMaster(on, id, opts = {}) {
+    const cfg = { on: !!on, id: on ? String(id || this.id) : '', auto: !!opts.auto, calMaster: !!opts.calMaster, at: Date.now() };
+    this.adoptMaster(cfg);
+    this.send({ t: 'master', ...cfg });
+  }
+  adoptMaster(cfg) {
+    this._m = cfg;
+    this.store.set('master', cfg);
+    this.swallowedBtn.clear();
+    this.notify();
+    this.emit('master', this.status().master);
   }
 
   notify() { this.emit('status', this.status()); }
@@ -342,6 +382,7 @@ class Link extends EventEmitter {
     this.state = 'idle';
     this.notify();
     this.emit('layout');
+    if (this._m.at) this.send({ t: 'master', ...this._m });
   }
 
   // Layouts used to be stored in screen points; the shared plane is millimetres now. Keep the relation between the
@@ -490,23 +531,40 @@ class Link extends EventEmitter {
     return job;
   }
 
+  // a folder is sent as one .zip (made in the temp folder, removed afterwards)
+  zipFolder(dir) {
+    return new Promise((resolve, reject) => {
+      const out = path.join(os.tmpdir(), 'atuls-' + crypto.randomBytes(4).toString('hex'), path.basename(dir) + '.zip');
+      fs.mkdirSync(path.dirname(out), { recursive: true });
+      const { execFile } = require('child_process');
+      const done = (err) => (err ? reject(new Error('could not pack the folder')) : resolve(out));
+      if (process.platform === 'win32') execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', 'Compress-Archive -LiteralPath $env:ATULS_DIR -DestinationPath $env:ATULS_OUT -Force'], { env: { ...process.env, ATULS_DIR: dir, ATULS_OUT: out }, windowsHide: true, timeout: 600000 }, done);
+      else execFile('/usr/bin/ditto', ['-c', '-k', '--sequesterRsrc', '--keepParent', dir, out], { timeout: 600000 }, done);
+    });
+  }
   async doSend(filePath) {
     if (!this.sock) throw new Error('Not linked');
+    let packed = null;
+    if ((await fs.promises.stat(filePath)).isDirectory()) { packed = await this.zipFolder(filePath); filePath = packed; }
+    try { await this.doSendFile(filePath); } finally { if (packed) { try { fs.rmSync(path.dirname(packed), { recursive: true, force: true }); } catch {} } }
+  }
+  async doSendFile(filePath) {
     const ws = this.sock;
+    if (!ws) throw new Error('Not linked');
     const { size } = await fs.promises.stat(filePath);
     const name = path.basename(filePath);
     ws.send(JSON.stringify({ t: 'file-start', name, size }));
     let sent = 0;
-    this.emit('transfer', { dir: 'out', name, pct: 0 });
+    this.emit('transfer', { dir: 'out', name, pct: 0, size });
     for await (const chunk of fs.createReadStream(filePath, { highWaterMark: 256 * 1024 })) {
       while (ws.bufferedAmount > 4 * 1024 * 1024) await new Promise((r) => setTimeout(r, 15));
       if (ws.readyState !== WebSocket.OPEN) throw new Error('Link lost');
       ws.send(chunk, { binary: true });
       sent += chunk.length;
-      this.emit('transfer', { dir: 'out', name, pct: size ? Math.round((sent / size) * 100) : 100 });
+      this.emit('transfer', { dir: 'out', name, pct: size ? Math.round((sent / size) * 100) : 100, size });
     }
     ws.send(JSON.stringify({ t: 'file-end' }));
-    this.emit('transfer', { dir: 'out', name, pct: 100, done: true });
+    this.emit('transfer', { dir: 'out', name, pct: 100, done: true, size });
   }
 
   rxStart(m) {
@@ -523,19 +581,20 @@ class Link extends EventEmitter {
     if (!this.rx) return;
     this.rx.stream.write(buf);
     this.rx.got += buf.length;
-    this.emit('transfer', { dir: 'in', name: this.rx.name, pct: this.rx.size ? Math.round((this.rx.got / this.rx.size) * 100) : 100 });
+    this.emit('transfer', { dir: 'in', name: this.rx.name, pct: this.rx.size ? Math.round((this.rx.got / this.rx.size) * 100) : 100, size: this.rx.size });
   }
 
   rxEnd() {
     const rx = this.rx;
     this.rx = null;
     if (!rx) return;
-    rx.stream.end(() => this.emit('transfer', { dir: 'in', name: rx.name, pct: 100, done: true, path: rx.path }));
+    rx.stream.end(() => this.emit('transfer', { dir: 'in', name: rx.name, pct: 100, done: true, path: rx.path, size: rx.size }));
   }
 
   // ---- local input events (from the global hook) -----------------------
   physicalTakeback(why, x, y) {
     if (this.state !== 'controlled') return;
+    if (this._m.on && ['hook', 'hardware', 'heuristic'].includes(why)) return; // master mode: only the master's mouse and keyboard count
     console.log('[island] takeback by own mouse', why, x, y, 'expected near', JSON.stringify(this.recent.slice(-1)));
     this.dc('takeback');
     this.d('takeback', { why, at: { x: Math.round(x), y: Math.round(y) }, expected: this.recent.slice(-1).map((p) => ({ x: Math.round(p.x), y: Math.round(p.y) }))[0] });
@@ -552,6 +611,7 @@ class Link extends EventEmitter {
   // system never sees either of them; a single press is replayed to the system so back/forward still work.
   onXButton(msg, i) {
     const which = (i.mouseData >>> 16) & 0xffff; // 1 = back, 2 = forward
+    if ((this.xLog = (this.xLog || 0) + 1) <= 40) console.log('[island] side button', msg === 0x20B ? 'down' : 'up', 'which', which, 'injected', (i.flags & 1) !== 0, 'held', [...this.xDown].join(','), 'chordActive', this.chordActive);
     const id = which === 2 ? 5 : 4;              // the numbering the global hook uses
     const other = id === 4 ? 5 : 4;
     if (msg === 0x20B) {
@@ -581,6 +641,23 @@ class Link extends EventEmitter {
     return false;
   }
 
+  // A side button that the system believes is held although nobody holds it (a release got lost) makes the mouse feel dead. We know which
+  // side buttons are physically down (xDown), so when the system says one is down and we do not, for 2.5 s in a row, it is released.
+  checkStuckButtons() {
+    this.stuckSince = this.stuckSince || {};
+    if (this.xDown.size || this.xReplayed.size || this.xTimers.size || this.xChord.size) { this.stuckSince = {}; return; }
+    for (const [vk, which] of [[5, 1], [6, 2]]) {
+      if (!native.winKeyDown(vk)) { this.stuckSince[vk] = 0; continue; }
+      const t = this.stuckSince[vk] || (this.stuckSince[vk] = Date.now());
+      if (Date.now() - t > 2500) { this.stuckSince[vk] = 0; native.winCursor.xbutton(which, false); console.log('[island] released a stuck side button', which); }
+    }
+  }
+  // when the app ends, a side button that we pressed for the system (the replay of a single press) must not stay down
+  releaseInjectedButtons() {
+    for (const id of [...this.xReplayed]) { try { native.winCursor.xbutton(id === 5 ? 2 : 1, false); } catch {} }
+    this.xReplayed.clear();
+  }
+
   // Windows mouse hook. Returns true to swallow the event.
   onWinMouse(msg, i) {
     this.inHook = true;
@@ -597,6 +674,12 @@ class Link extends EventEmitter {
   onWinMouseInner(msg, i) {
     // ISLAND_TEST_INJECTED lets automated tests stand in for a physical mouse
     const injected = (i.flags & 1) !== 0 && !process.env.ISLAND_TEST_INJECTED;
+    if (!injected && this.lockedOut()) {
+      const lb = BTN[msg];
+      if (lb && lb[1] === 'up') return this.swallowedBtn.delete(lb[0]); // the release of a press from before the lock goes through, or the button stays stuck
+      if (lb) this.swallowedBtn.add(lb[0]);
+      return true;
+    }
     if (!injected && this.pickerClick(msg === 0x201 ? 'ldown' : msg === 0x202 ? 'lup' : msg === 0x204 ? 'rdown' : msg === 0x205 ? 'rup' : '')) return true;
     if (!injected) {
       // Never swallow only half of a press: the system tracks button state, so a swallowed release
@@ -740,7 +823,13 @@ class Link extends EventEmitter {
   // macOS event tap: exact pixel scrolling (down / right positive). While controlling it is forwarded and swallowed.
   onMacScroll(x, y, info = {}) {
     // events this app posted itself (marker, or posted a moment ago, or while this computer is being steered) pass untouched
-    if (info.click) return this.pickerClick(info.click);
+    if (info.click) {
+      // a third way to see the buttons (besides the global hook and the overlay): this tap sees every click of the system. While controlling the other
+      // computer it forwards them too; a click that already came another way within 60 ms is dropped in onLocalButton.
+      if (this.state === 'controlling' || (this.tapClickLog = (this.tapClickLog || 0) + 1) <= 10) { try { require('./lifecycle').line('click ' + info.click + ' seen by the event tap, link state ' + this.state); } catch {} }
+      if (this.state === 'controlling' && !this.picker) { const mb = { ldown: [true, 1], lup: [false, 1], rdown: [true, 2], rup: [false, 2] }[info.click]; if (mb) this.onLocalButton(mb[0], mb[1], 1); }
+      return this.pickerClick(info.click);
+    }
     if (info.mid) { // the wheel was pressed (mid 1) or released (mid 2) on a mouse connected to this Mac
       const a = this.buttonMap.middle;
       if (info.mid === 1 && this.state === 'idle' && a && a !== 'default') { this.midSwallowed = true; this.runAction(a, 'middle', 0); return true; }
@@ -922,6 +1011,7 @@ class Link extends EventEmitter {
   // Take over the pointer that is on the other computer, without moving it: it simply keeps going from its last place.
   beginAttach() {
     if (this.state !== 'idle' || !this.sock || !this.peer) return false;
+    if (this.lockedOut()) return false; // master mode: the other computer is the master; this one never takes control (the pointer this computer sees is the master's)
     const cur = (this.input.getPos && this.input.getPos()) || this.lastIdle || { x: 0, y: 0 };
     const d = L.dispAt(this.myDisplays, cur.x, cur.y) || this.myDisplays[0];
     if (!d) return false;
@@ -947,6 +1037,7 @@ class Link extends EventEmitter {
 
   gazeEnter() {
     if (!this.sock || !this.peer) return false;
+    if (this.state === 'idle' && this.lockedOut()) return false; // master mode: only the master's camera decides
     // the other computer is steering this one and the user now looks at the other computer: hand the pointer back to it
     // (same message as when the user grabs the local mouse, so the other computer needs no camera and no protocol change)
     if (this.state === 'controlled') {
@@ -1073,6 +1164,7 @@ class Link extends EventEmitter {
     for (const t of this.xTimers.values()) clearTimeout(t);
     this.xTimers.clear();
     this.midSwallowed = false; this.midRemote = false; this.chordActive = false; this.sideHeld.clear();
+    if (this._m.on && this.masterId()) this.setMaster(false); // panic also ends master mode, on both computers
     try { this.localSmooth.flush(); this.remoteSmooth.flush(); } catch {}
     if (this.state === 'controlling') this.forceRelease();
     else if (this.state === 'controlled') this.physicalTakeback('panic', 0, 0);
@@ -1211,6 +1303,7 @@ class Link extends EventEmitter {
   // Both side buttons of the mouse (back + forward) together = region screenshot to the clipboard,
   // taken on whichever computer the pointer is on; the clipboard sync brings it to the other one.
   sideChord(down, button) {
+    if ((this.sLog = (this.sLog || 0) + 1) <= 40) console.log('[island] hook side button', button, down ? 'down' : 'up', 'held', [...this.sideHeld].join(','), 'chordActive', this.chordActive, 'external', this.external);
     if (down) {
       this.sideHeld.add(button);
       if (this.sideHeld.has(4) && this.sideHeld.has(5) && !this.chordActive) {
@@ -1218,10 +1311,15 @@ class Link extends EventEmitter {
         const a = this.buttonMap.chord;
         console.log('[island] back+forward chord ->', this.state === 'controlling' ? 'the other computer' : 'this computer', a || 'default');
         if (this.state === 'controlling') this.send({ t: 'xbtn', k: 'chord' });
-        else if (this.state === 'idle') { if (!this.runAction(a, 'chord', 0)) this.shoot(); }
+        // here the action waits until the buttons are let go: the screenshot overlay closes at once when it opens while the hand still holds buttons
+        else if (this.state === 'idle') this.chordPending = { a };
       }
     } else {
       this.sideHeld.delete(button);
+      if (!this.sideHeld.size && this.chordPending) {
+        const a = this.chordPending.a; this.chordPending = null;
+        setTimeout(() => { if (this.state === 'idle' && !this.runAction(a, 'chord', 0)) this.shoot(); }, 200);
+      }
       if (!this.sideHeld.size && !this.external) this.chordActive = false;
     }
   }
@@ -1233,6 +1331,11 @@ class Link extends EventEmitter {
     else this.buttonsDown.delete(button);
     if (this.state !== 'controlling') return;
     if (Date.now() < this.ignoreButtonsUntil) { this.dc('btn.held'); return; }
+    // on the Mac a click can arrive twice (from the system-wide hook and from the full-screen overlay): the second one within 60 ms is dropped
+    const bk = (down ? 'd' : 'u') + button;
+    this.btnSentAt = this.btnSentAt || {};
+    if (Date.now() - (this.btnSentAt[bk] || 0) < 60) return;
+    this.btnSentAt[bk] = Date.now();
     this.dc(down ? 'btn.tx' : 'btn.tx.up');
     if (down && (this.btnTxLog = (this.btnTxLog || 0) + 1) <= 6) { try { require('./lifecycle').line('button ' + button + ' sent to the other computer'); } catch {} }
     this.send({ t: down ? 'down' : 'up', b: button, n: clicks });
@@ -1268,6 +1371,17 @@ class Link extends EventEmitter {
     if (m.t !== 'move' && (this.inX || this.inY)) this.drainMoves(); // clicks, keys and hand-overs happen at the real position
     switch (m.t) {
       case 'ping': this.send({ t: 'pong', ts: m.ts }); break;
+      // master mode: the master's Home page (to do list, calendar, music) is shown on the other computer too
+      case 'home': if (this.followsMaster()) this.emit('home', m); break;
+      case 'todo': if (this.iAmMaster() && Array.isArray(m.todos)) this.emit('todo', m.todos); break;
+      case 'mediakey': if (this.iAmMaster()) this.emit('mediakey', m.k); break;
+      case 'master': {
+        // the newer choice wins; two computers that both claim to be the master by calibration: the one calibrated first wins
+        const mine = this._m, theirs = { on: !!m.on, id: String(m.id || ''), auto: !!m.auto, calMaster: !!m.calMaster, at: Number(m.at) || 0 };
+        const wins = theirs.calMaster && mine.calMaster ? theirs.at < mine.at : theirs.at > (mine.at || 0);
+        if (wins) this.adoptMaster(theirs);
+        break;
+      }
       case 'pong': this.ds('rtt', Date.now() - m.ts); break;
       case 'rtoken': {
         if (this.peerHost) this.store.set('peers', { ...this.store.get('peers', {}), [this.peerHost]: m.token });
