@@ -190,6 +190,10 @@ async function searchApps(query) {
 // ---------------------------------------------------------------- the ring window
 let pageStamp = 0;
 const stamp = () => { try { return ['radial.html', 'assets/wheel.js'].map((f) => fs.statSync(path.join(__dirname, f)).mtimeMs).join('|'); } catch { return 0; } };
+let idleTimer = null; // the wheel's window is thrown away a minute after it was last used (it holds about 100 MB while it waits) and made again when it is needed
+const enabled = () => !D || D.store.get('radialOn', true) !== false;
+function destroyWin() { if (win && !win.isDestroyed() && !isOpen) { win.destroy(); win = null; try { require('./lifecycle').line('radial menu: window released (not in use)'); } catch {} } }
+function setEnabled(v) { D.store.set('radialOn', !!v); if (!v) { close(); destroyWin(); } }
 let win = null, isOpen = false, timer = null, away = 0, heldBy = null, holdTimer = null, center = { x: 0, y: 0 }, current = null;
 
 function close() {
@@ -197,6 +201,7 @@ function close() {
   clearInterval(timer); timer = null; clearInterval(holdTimer); holdTimer = null; isOpen = false; heldBy = null;
   try { globalShortcut.unregister('Escape'); } catch {}
   if (win && !win.isDestroyed()) win.hide();
+  clearTimeout(idleTimer); idleTimer = setTimeout(destroyWin, 60000); idleTimer.unref();
 }
 
 async function payload(cfg) {
@@ -218,6 +223,8 @@ async function payload(cfg) {
 
 async function open(trigger) {
   if (isOpen) { close(); return; }
+  if (!enabled()) return; // switched off in Settings: nothing is created, nothing waits
+  clearTimeout(idleTimer);
   try {
     const cfg = getCfg();
     const data = await payload(cfg);
@@ -345,4 +352,4 @@ function init(deps) {
   setTimeout(() => loadStoreApps(), 6000); // so the first search is instant
 }
 
-module.exports = { init, open, close, openSettings, sendSettings, get isOpen() { return isOpen; } };
+module.exports = { init, open, close, setEnabled, openSettings, sendSettings, get isOpen() { return isOpen; } };

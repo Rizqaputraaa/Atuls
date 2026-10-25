@@ -5,6 +5,8 @@ const island = $('#island');
 let closeTimer, playing = false, toastTimer = null, toastOn = false;
 let pillRight = false;
 let lastOH = 410, ohTimer = null, macExtra = 0; // height of the open panel (it follows the page)
+const KARA_FPS = 12; // steps per second of the colour fill in the open panel
+let karaIdx = -1, karaEl = null, karaTimer = null; // the line whose colour fill runs, and the one element that shows it
 let mixerOpen = false, mixTimer = null, mixDrag = 0, mixSyncAt = 0, mixSig = ''; // the volume mixer (declared early: setOpen runs before the mixer code)
 
 // The main process polls the cursor and tells us when it is over the island
@@ -27,6 +29,7 @@ const setOpen = (v) => {
   if (v && !isOpen && !dragging) goHome(); // every time the pill opens it shows the home page, whatever tab was used last
   isOpen = v;
   if (!v) closeMixer();
+  applyKara();
   island.classList.toggle('open', v);
   island.classList.toggle('compact', !v);
   api.islandSize(...SIZES[v ? 'open' : 'compact']);
@@ -86,6 +89,7 @@ function setPillText(t, kara) {
   inner.textContent = t;
   if (kara) inner.className = 'k'; // a sung line: it fills with colour as it is sung
   box.appendChild(inner);
+  if (kara) applyKara();
   requestAnimationFrame(() => {
     const over = inner.scrollWidth - box.clientWidth;
     if (over > 2) {
@@ -105,7 +109,7 @@ function refreshPill() {
   fitPill(lyricNow ? t : '');
 }
 const topClock = () => { $('#top-clock').textContent = new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); };
-setInterval(() => { topClock(); if (!playing) refreshPill(); }, 1000);
+(function clockTick() { topClock(); if (!playing) refreshPill(); setTimeout(clockTick, 60000 - (Date.now() % 60000) + 50); })(); // on the minute: the clock has no seconds
 topClock();
 refreshPill();
 // the letters are Gilroy: measure the pill again once the font is there
@@ -655,7 +659,7 @@ api.onToast((t) => {
   $('#toast-text').textContent = t.text;
   $('#toast').classList.toggle('err', err);
   $('#toast').classList.toggle('prog', prog);
-  $('#toast').classList.toggle('ico', t.icon === 'sent' || t.icon === 'received');
+  $('#toast').classList.toggle('deco-icon', t.icon === 'sent' || t.icon === 'received'); // (not called 'ico': that class is the round icon button style)
   $('#toast-text').textContent = t.text;
   const gl = $('#toast-glyph');
   gl.hidden = !(prog && t.step);
@@ -771,13 +775,16 @@ renderTodos();
 
 // master mode: the master's Home page (to do list, calendar, music) is what both computers show. The master sends it whenever it changes;
 // the other computer shows it, sends its to do edits back, and its music buttons drive the master's player.
-let pushTimer = 0, lastThumbSent = null;
+let pushTimer = 0, lastThumbSent = null, lastPushSig = '', lastPushAt = 0;
 function pushHome(full) {
   if (!iMaster) return;
   clearTimeout(pushTimer);
   pushTimer = setTimeout(() => {
     let media = null;
     if (localMedia) { media = { ...localMedia }; if (!full && media.thumb === lastThumbSent) delete media.thumb; else lastThumbSent = media.thumb; }
+    const sig = JSON.stringify([todos, calEvents, media]);
+    if (!full && sig === lastPushSig && Date.now() - lastPushAt < 30000) return; // nothing new to send
+    lastPushSig = sig; lastPushAt = Date.now();
     api.homePush({ todos, events: calEvents, media });
   }, 250);
 }
@@ -822,7 +829,7 @@ function lyricsFollow(m) {
   if (key !== lyr.key) {
     lyr = { key, lines: null, pos: 0, at: 0, idx: -2, shown: -2, els: [] };
     setLyric('');
-    island.style.animation = 'none';
+    karaIdx = -1; applyKara();
     renderLyricList(null);
     lyrNote(!m.title ? 'Nothing playing' : 'Looking for lyrics...');
     if (m.title) {
@@ -854,6 +861,7 @@ function lyrScroll(i) {
   $('#lyr-list').style.transform = `translateY(${Math.round(h * 0.42 - (el.offsetTop + el.offsetHeight / 2))}px)`;
 }
 function lyricTick() {
+  lyrTimerSync();
   if (!lyricsEnabled || !lyr.lines) return setLyric('');
   const now = lyrPos();
   // a line becomes the big one a moment BEFORE its time (when the last words of the line before it are being sung), so the next words can be read
@@ -867,23 +875,48 @@ function lyricTick() {
     startKara(i);
   }
   lyr.idx = i;
-  island.style.animationPlayState = playing ? 'running' : 'paused';
+  if (karaEl) karaEl.style.animationPlayState = playing ? 'running' : 'paused';
   setLyric(playing && i >= 0 ? (lyr.lines[i].line || '♪') : '');
 }
-setInterval(lyricTick, 250);
+let lyrTimer = null;
+function lyrTimerSync() { // runs only while a song with lyrics is playing (a paused or lyric-less song changes nothing on its own)
+  const need = !!(lyricsEnabled && lyr.lines && playing);
+  if (need && !lyrTimer) lyrTimer = setInterval(lyricTick, 250);
+  else if (!need && lyrTimer) { clearInterval(lyrTimer); lyrTimer = null; }
+}
 // the colour that fills the sung line is one CSS animation (--p) lasting as long as the line; it pauses with the music
 // how long before the next line the sung line is handed over: the last words of a line (about a fifth of it, at most 0.9 s)
 function lyrLead(k) {
   const a = lyr.lines[k], b = lyr.lines[k + 1];
   return 0; // (a line used to be handed over a little early; it follows the song exactly again)
 }
-function startKara(i) {
-  island.style.animation = 'none';
-  void island.offsetWidth;
-  if (i < 0 || !lyr.lines) return;
-  const a = lyr.lines[i], b = lyr.lines[i + 1];
-  const dur = Math.max(1.2, Math.min(b ? b.t - lyrLead(i) - a.t : 5, 9) * 0.92);
-  island.style.animation = `kara ${dur.toFixed(2)}s linear ${(a.t - lyrPos()).toFixed(2)}s both`; // a positive delay = the fill waits for the line's own time
+// The fill runs on ONE small element: the sung line in the small pill while the panel is closed, the big line in the panel while it is open.
+// (It used to run on the whole island: every frame restyled and repainted the full window, about half of a CPU core with the GPU.)
+function startKara(i) { karaIdx = i; applyKara(); }
+function applyKara() {
+  if (karaEl) { karaEl.style.animation = 'none'; karaEl = null; }
+  if (karaTimer) { clearInterval(karaTimer); karaTimer = null; }
+  if (karaIdx < 0 || !lyr.lines) return;
+  const el = isOpen ? (lyr.els[karaIdx] && lyr.els[karaIdx].querySelector('.t')) : document.querySelector('#pill-text .k');
+  if (!el) return;
+  const inPill = !isOpen;
+  const a = lyr.lines[karaIdx], b = lyr.lines[karaIdx + 1];
+  const dur = Math.max(1.2, Math.min(b ? b.t - lyrLead(karaIdx) - a.t : 5, 9) * 0.92);
+  // 24 steps a second instead of every screen frame: the soft edge of the fill hides the steps, and each repaint of the window costs (most of all
+  // on Windows, where the transparent window is redrawn whole)
+  const delay = (a.t - lyrPos()).toFixed(2); // a positive delay = the fill waits for the line's own time
+  if (inPill) {
+    // the small pill: no CSS animation (a running animation makes the window draw 60 times a second whatever its speed); a timer moves the fill
+    // 10 times a second instead, and only while the song plays
+    const t0 = a.t;
+    const paint = () => { if (!playing) return; const f = Math.max(0, Math.min(1, (lyrPos() - t0) / dur)); el.style.setProperty('--p', (-8 + f * 116).toFixed(1) + '%'); };
+    el.style.setProperty('--p', '-8%'); paint();
+    karaTimer = setInterval(paint, 100);
+  } else {
+    el.style.animation = `kara ${dur.toFixed(2)}s steps(${Math.max(6, Math.round(dur * KARA_FPS))}, end) ${delay}s both`;
+    el.style.animationPlayState = playing ? 'running' : 'paused';
+  }
+  karaEl = el;
 }
 // the pill is as wide as the lyric line it shows (a plain pill otherwise)
 function fitPill(text) {

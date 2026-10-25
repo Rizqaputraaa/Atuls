@@ -29,13 +29,17 @@ class Diag {
     this.stats = {}; this.counts = {}; this.recent = [];
     this.written = 0;
     try { fs.mkdirSync(dir, { recursive: true }); } catch {}
-    this.timer = setInterval(() => this.writeSummary(), 5000);
+    // the summary file is written only when something new happened (an event or a count: within 5 s; only new measurements such as the link
+    // round trip: every 30 s), so an idle app does not write to the disk every 5 seconds
+    this.dirty = false; this.statDirty = false; this.lastWrite = 0;
+    this.timer = setInterval(() => { if (this.dirty || (this.statDirty && Date.now() - this.lastWrite > 30000)) this.writeSummary(); }, 5000);
     if (this.timer.unref) this.timer.unref();
   }
 
   event(type, data = {}) {
     try {
       this.counts[type] = (this.counts[type] || 0) + 1;
+      this.dirty = true;
       if (!/^(wall|feedback|move|rx|tx)/.test(type)) { try { require('./lifecycle').line('event ' + type + ' ' + JSON.stringify(data).slice(0, 200)); } catch {} }
       const line = JSON.stringify({ t: new Date().toISOString().slice(11, 23), type, ...data });
       this.recent.push(line.length > 220 ? line.slice(0, 220) + '...' : line);
@@ -45,8 +49,8 @@ class Diag {
     } catch { /* diagnostics must never break the app */ }
   }
 
-  count(name, n = 1) { this.counts[name] = (this.counts[name] || 0) + n; }
-  stat(name, v) { if (Number.isFinite(v)) (this.stats[name] || (this.stats[name] = new Stat())).add(v); }
+  count(name, n = 1) { this.counts[name] = (this.counts[name] || 0) + n; this.dirty = true; }
+  stat(name, v) { if (Number.isFinite(v)) { (this.stats[name] || (this.stats[name] = new Stat())).add(v); this.statDirty = true; } }
   st(name, unit) { return (this.stats[name] || new Stat()).text(unit); }
   c(name) { return this.counts[name] || 0; }
 
@@ -93,7 +97,7 @@ class Diag {
     return lines.join('\n');
   }
 
-  writeSummary() { try { fs.writeFileSync(this.summaryFile, this.summary()); } catch {} }
+  writeSummary() { this.dirty = false; this.statDirty = false; this.lastWrite = Date.now(); try { fs.writeFileSync(this.summaryFile, this.summary()); } catch {} }
   stop() { clearInterval(this.timer); this.writeSummary(); }
 }
 

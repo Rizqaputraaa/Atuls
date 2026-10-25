@@ -247,6 +247,7 @@ function setCapture(on) {
     return;
   }
   if (process.platform === 'darwin') native.macMouse.hideCursor(on); // the overlay only hides it while it has focus
+  if (!overlay && on && !MAC) createOverlay();
   if (!overlay) return;
   if (!on) {
     overlay.webContents.executeJavaScript('document.exitPointerLock && document.exitPointerLock()', true).catch(() => {});
@@ -324,7 +325,8 @@ function togglePill() {
 function pollMacDrop() {
   if (!MAC) return;
   let wasDown = false, base = null, dragFiles = null, announced = false;
-  setInterval(() => {
+  // asked every 40 ms while the left button is down (a drag may be under way) and every 100 ms otherwise
+  const tick = () => {
     try {
       if (!win || win.isDestroyed()) return;
       const down = native.macMouse.leftDown();
@@ -346,7 +348,9 @@ function pollMacDrop() {
       if (!down && wasDown) win.setAlwaysOnTop(true, 'screen-saver'); // back above everything once the mouse button is up
       wasDown = down;
     } catch (e) { console.error('[island] drop poll failed:', e.message); }
-  }, 40);
+    setTimeout(tick, wasDown ? 40 : 100).unref();
+  };
+  setTimeout(tick, 100).unref();
 }
 
 // Color picker (live, like PowerToys): the screen keeps running; a small magnifier follows the pointer with the color under it,
@@ -659,6 +663,7 @@ function watchAccess() {
 }
 ipcMain.on('onboard:restart', () => { lifecycle.line('onboarding: restart asked'); app.relaunch(); app.quit(); });
 ipcMain.on('onboard:open', (_e, pane) => { if (/^Privacy_(Accessibility|ListenEvent)$/.test(pane)) shell.openExternal('x-apple.systempreferences:com.apple.preference.security?' + pane); });
+let relockTries = [];
 let hookDownLog = 0, hookUpLog = 0, ovBtnLog = 0, hookLogUntil = 0;
 function startInput() {
   console.log('[island] checking input access');
@@ -1269,7 +1274,10 @@ app.whenReady().then(() => {
   if (MAC) setInterval(() => { try { native.setPhysicalBlock(link.lockedOut()); if (link.lockedOut()) native.reassertMouseFree(); } catch {} }, 400).unref();
   // Mac: while this Mac controls the other computer the buttons are also read straight from the hardware state, 60 times a second. The system-wide
   // hook and the overlay did not report clicks in this situation; a click that arrives another way too is dropped in onLocalButton.
-  if (MAC) { const held = [false, false]; setInterval(() => { try { if (link.state !== 'controlling') { held[0] = held[1] = false; return; } [0, 1].forEach((b) => { const d = native.macMouse.buttonHeld(b); if (d !== held[b]) { held[b] = d; if (d || true) { lifecycle.line('mouse button ' + (b + 1) + (d ? ' down' : ' up') + ' read from the hardware state'); link.onLocalButton(d, b + 1, 1); } } }); } catch {} }, 16).unref(); }
+  if (MAC) { const held = [false, false]; let btnTimer = null; const btnTick = () => { try { [0, 1].forEach((b) => { const d = native.macMouse.buttonHeld(b); if (d !== held[b]) { held[b] = d; if (d || true) { lifecycle.line('mouse button ' + (b + 1) + (d ? ' down' : ' up') + ' read from the hardware state'); link.onLocalButton(d, b + 1, 1); } } }); } catch {} };
+    // 60 reads a second, but only while this Mac controls the other computer (the state changes are announced by the link)
+    const btnSync = () => { const need = link.state === 'controlling'; if (need && !btnTimer) { btnTimer = setInterval(btnTick, 16); } else if (!need && btnTimer) { clearInterval(btnTimer); btnTimer = null; held[0] = held[1] = false; } };
+    link.on('status', btnSync); btnSync(); }
   else { setInterval(() => { try { link.checkStuckButtons(); } catch {} }, 1000).unref(); app.on('will-quit', () => { try { link.releaseInjectedButtons(); } catch {} }); }
   ipcMain.handle('master:set', (_e, on, who) => { link.setMaster(!!on, who === 'peer' ? (link.peer && link.peer.id) : link.id); return link.status().master; });
   link.on('clip', applyRemoteClip);
@@ -1290,7 +1298,7 @@ app.whenReady().then(() => {
   link.on('capture', (on) => diag && diag.event('capture', { on }));
   ['display-added', 'display-removed', 'display-metrics-changed'].forEach((ev) => screen.on(ev, onDisplaysChanged));
   startHookWatchdog();
-  createOverlay();
+  if (MAC) createOverlay(); // Windows swallows local input inside its hooks and needs no overlay window (about 70 MB); it is made only if the hooks cannot be installed
   pollHover();
   pollMacDrop();
   link.start();
@@ -1397,8 +1405,16 @@ app.whenReady().then(() => {
   });
   ipcMain.on('ov-btn', (_e, down, domBtn, n) => { const b = [1, 3, 2, 4, 5][domBtn]; if (b && link.state === 'controlling') { if (down) lifecycle.line('mouse button ' + b + ' down seen by the overlay'); link.onLocalButton(!!down, b, n || 1); } });
   ipcMain.on('ov-move', (_e, dx, dy) => link.onRelMove(dx, dy));
-  link.on('lockfail', () => { console.log('[island] pointer lock gave no movement, using cursor tracking instead'); overlay.webContents.executeJavaScript('document.exitPointerLock && document.exitPointerLock()', true).catch(() => {}); });
-  ipcMain.on('ov-lock', (_e, v) => { if (v) { link.relMoves = 0; link.hookMovesLocked = 0; link.relIgnoreUntil = Date.now() + 600; } link.locked = !!v; console.log('[island] pointer lock', v ? 'on' : 'off'); });
+  link.on('lockfail', () => { console.log('[island] pointer lock gave no movement, using cursor tracking instead'); overlay && overlay.webContents.executeJavaScript('document.exitPointerLock && document.exitPointerLock()', true).catch(() => {}); });
+  ipcMain.on('ov-lock', (_e, v) => { if (v) { link.relMoves = 0; link.hookMovesLocked = 0; link.relIgnoreUntil = Date.now() + 600; } link.locked = !!v; console.log('[island] pointer lock', v ? 'on' : 'off');
+    // The pointer lock can be lost while this Mac controls the other computer (the overlay loses the focus: a notification, another app...). The Mac's
+    // pointer is then free again and runs into the edge of the Mac's own screen, which feels like an invisible block. Take the lock again at once
+    // (at most 6 tries in 3 seconds, so a refusal does not turn into a loop).
+    if (!v && MAC && link.state === 'controlling' && overlay && !overlay.isDestroyed()) {
+      const now = Date.now(); relockTries = relockTries.filter((t) => now - t < 3000);
+      if (relockTries.length < 6) { relockTries.push(now); setTimeout(() => { if (link.state !== 'controlling' || !overlay || overlay.isDestroyed() || link.locked) return; try { app.focus({ steal: true }); overlay.focus(); } catch {} overlay.webContents.executeJavaScript('document.body.requestPointerLock()', true).catch(() => {}); lifecycle.line('pointer lock lost while controlling: taken again'); }, 60); }
+    }
+  });
   ipcMain.handle('diag:report', () => { diag.writeSummary(); return diag.summary(); });
   ipcMain.handle('diag:open', () => { diag.writeSummary(); shell.showItemInFolder(diag.summaryFile); });
   // a command file lets a script ask this app to stop itself properly (a hard kill can leave a hung process that holds the mouse hooks)
@@ -1428,6 +1444,19 @@ app.whenReady().then(() => {
       else if (c === 'leavepeer') lifecycle.line('test: leave peer -> ' + link.gazeLeave());
       else if (c === 'ovclick') { if (overlay && !overlay.isDestroyed()) { for (const t of ['mouseDown', 'mouseUp']) overlay.webContents.sendInputEvent({ type: t, x: 200, y: 200, button: 'left', clickCount: 1 }); lifecycle.line('test: synthetic click sent to the overlay (link state ' + link.state + ')'); } else lifecycle.line('test: no overlay'); }
       else if (c === 'assoctest') { hookLogUntil = Date.now() + 16000; lifecycle.line('test: mouse disconnected from the cursor for 14 s: ' + native.macAssociate(false)); setTimeout(() => lifecycle.line('test: mouse connected again: ' + native.macAssociate(true)), 14000); }
+      else if (c === 'radialtest') radial.open('test');
+      else if (c === 'unlock') { if (overlay && !overlay.isDestroyed()) overlay.webContents.executeJavaScript('document.exitPointerLock && document.exitPointerLock()', true).catch(() => {}); } // test: lose the pointer lock
+      else if (c.startsWith('movetest:')) { // takes control, moves the other computer's pointer n steps of (dx,dy), gives control back
+        const [dx, dy, n, gap] = c.slice(9).split(',').map(Number);
+        (async () => { const sl = (ms) => new Promise((r) => setTimeout(r, ms)); const ok = link.gazeEnter(); lifecycle.line('test: move enter ' + ok); if (ok !== true) return; await sl(700); for (let i = 0; i < n; i++) { link.queueMove(dx, dy); await sl(gap || 20); } await sl(500); lifecycle.line('test: move leave ' + link.gazeLeave()); })();
+      }
+      else if (c === 'dragtest') { // takes control, presses the left button on the other computer, drags 300 px to the right, lets go, gives control back
+        (async () => { const sl = (ms) => new Promise((r) => setTimeout(r, ms)); const ok = link.gazeEnter(); lifecycle.line('test: drag enter ' + ok); if (ok !== true) return; await sl(700); link.send({ t: 'down', b: 1, n: 1 }); await sl(200); for (let i = 0; i < 30; i++) { link.queueMove(10, 0); await sl(30); } await sl(300); link.send({ t: 'up', b: 1 }); await sl(400); lifecycle.line('test: drag leave ' + link.gazeLeave()); })();
+      }
+      else if (c === 'procs') { // which window lives in which process, with its CPU and memory (for measuring)
+        const wins = Object.fromEntries(BrowserWindow.getAllWindows().map((w) => { try { return [w.webContents.getOSProcessId(), (w.webContents.getURL().split('/').pop() || '?') + (w.isVisible() ? '' : ' (hidden)')]; } catch { return [0, '?']; } }));
+        lifecycle.line('test: procs ' + app.getAppMetrics().map((p) => `${p.pid} ${p.type}${wins[p.pid] ? ' ' + wins[p.pid] : ''} cpu ${p.cpu.percentCPUUsage.toFixed(1)}% mem ${Math.round(p.memory.workingSetSize / 1024)}MB`).join(' | '));
+      }
       else if (c === 'layoutdump') lifecycle.line('test: layout ' + JSON.stringify(link.layoutState()));
       else if (c === 'cursorpos') lifecycle.line('test: cursor at ' + JSON.stringify(screen.getCursorScreenPoint()));
       else if (c.startsWith('setpos:')) { const [x, y] = c.slice(7).split(',').map(Number); input.setPos(x, y); setTimeout(() => lifecycle.line('test: cursor after setpos ' + JSON.stringify(screen.getCursorScreenPoint())), 200); }
@@ -1475,7 +1504,7 @@ app.whenReady().then(() => {
   ipcMain.handle('log:open', () => { shell.showItemInFolder(lifecycle.file); });
   // start with the computer (the installed app; a development run never registers itself)
   if (app.isPackaged && !store.get('startupInit', false)) { try { app.setLoginItemSettings({ openAtLogin: true }); } catch {} store.set('startupInit', true); lifecycle.line('start with the computer: switched on (first run)'); }
-  const startupState = () => ({ lyrics: store.get('lyrics', true), packaged: app.isPackaged, openAtLogin: !!app.getLoginItemSettings().openAtLogin, splash: store.get('splash', true), splashColors: store.get('splashColors', {}), edgeFx: store.get('edgeFx', true), version: app.getVersion(), sound: store.get('sound', true), soundVol: store.get('soundVol', 60), gameHide: store.get('gameHide', true), pillOff: !!store.get('pillOff', false) });
+  const startupState = () => ({ lyrics: store.get('lyrics', true), packaged: app.isPackaged, openAtLogin: !!app.getLoginItemSettings().openAtLogin, splash: store.get('splash', true), splashColors: store.get('splashColors', {}), radialOn: store.get('radialOn', true) !== false, edgeFx: store.get('edgeFx', true), version: app.getVersion(), sound: store.get('sound', true), soundVol: store.get('soundVol', 60), gameHide: store.get('gameHide', true), pillOff: !!store.get('pillOff', false) });
   // the animation colours: stamped with the time, kept here and sent to the other computer, which keeps the newer ones
   const setSplashColors = (c1, c2) => {
     const ok = (v) => (/^#[0-9a-f]{6}$/i.test(v || '') ? v.toLowerCase() : '');
@@ -1492,6 +1521,7 @@ app.whenReady().then(() => {
     if (o && typeof o.pillOff === 'boolean' && o.pillOff !== pillOff) togglePill();
     if (o && typeof o.sound === 'boolean') { store.set('sound', o.sound); lifecycle.line('settings: notification sounds ' + o.sound); }
     if (o && Number.isFinite(Number(o.soundVol)) && o.soundVol !== undefined) store.set('soundVol', Math.max(0, Math.min(100, Math.round(Number(o.soundVol)))));
+    if (o && typeof o.radialOn === 'boolean') { radial.setEnabled(o.radialOn); lifecycle.line('settings: radial menu ' + (o.radialOn ? 'on' : 'off')); }
     if (o && typeof o.lyrics === 'boolean') { store.set('lyrics', o.lyrics); lifecycle.line('settings: lyrics in the pill ' + o.lyrics); }
     if (o && typeof o.edgeFx === 'boolean') { store.set('edgeFx', o.edgeFx); syncOutFn(['edgeFx']); lifecycle.line('settings: screen-edge effect ' + o.edgeFx); }
     return startupState();

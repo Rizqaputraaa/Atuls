@@ -449,8 +449,8 @@ button { font: inherit; color: inherit; }
 
 /* a banner for a good message uses the decoration colour */
 /* the tick stays green; the paper plane (sent) and the arrow (received) use the decoration colour */
-#toast.ico:not(.err):not(.prog) #toast-icon { background: var(--deco); }
-#toast.ico:not(.err):not(.prog) #toast-icon svg { stroke: #fff; }
+#toast.deco-icon:not(.err):not(.prog) #toast-icon { background: var(--deco); }
+#toast.deco-icon:not(.err):not(.prog) #toast-icon svg { stroke: #fff; }
 
 /* ===== Link page: the same look as Home and Tray ===== */
 #link-wrap { display: flex; flex-direction: column; gap: 10px; padding: 2px 0 4px; }
@@ -507,3 +507,7 @@ body.darwin.pr { justify-content: flex-start; } /* the pill stays where it is wh
 
 .top-left { justify-self: start; display: flex; align-items: center; gap: 10px; }
 #island:not([data-page="0"]) #cam-banner { display: none; } /* the camera mark is on the Home page only */
+
+
+/* the lyric lines of the closed panel do not animate (nobody sees them, and each change would wake the graphics process) */
+#island:not(.open) #lyr-list, #island:not(.open) .ll { transition: none; }

@@ -1105,7 +1105,10 @@ class Link extends EventEmitter {
     let bx = this.virt.x, by = this.virt.y;
     const cur = this.input.getPos && this.input.getPos();
     // if the system put the cursor somewhere else than we asked (wall, notch, Dock...), keep going from where it really is
-    if (cur && this.lastSet && (Math.abs(cur.x - this.lastSet.x) > 2 || Math.abs(cur.y - this.lastSet.y) > 2) && L.dispAt(this.myDisplays, cur.x, cur.y)) { bx = cur.x; by = cur.y; this.dc('feedback'); }
+    if (cur && this.lastSet && (Math.abs(cur.x - this.lastSet.x) > 2 || Math.abs(cur.y - this.lastSet.y) > 2) && L.dispAt(this.myDisplays, cur.x, cur.y)) {
+      if (Date.now() - (this.fbLogAt || 0) > 330) { this.fbLogAt = Date.now(); this.d('feedback', { asked: { x: this.lastSet.x, y: this.lastSet.y }, got: { x: cur.x, y: cur.y } }); } // the system put the pointer somewhere else than asked
+      bx = cur.x; by = cur.y; this.dc('feedback');
+    }
     const nx = bx + dx, ny = by + dy;
     if (L.dispAt(this.myDisplays, nx, ny)) {
       this.virt = { x: nx, y: ny };
@@ -1124,6 +1127,8 @@ class Link extends EventEmitter {
       }
       this.virt = { x: cl.x, y: cl.y };
       this.dc('wall');
+      // where the pointer was stopped (at most 3 a second): if the pointer feels blocked by something invisible, this says where and by what
+      if (Date.now() - (this.wallLogAt || 0) > 330) { this.wallLogAt = Date.now(); this.d('wall', { from: { x: Math.round(bx), y: Math.round(by) }, want: { x: Math.round(nx), y: Math.round(ny) }, put: { x: Math.round(cl.x), y: Math.round(cl.y) }, step: { dx: Math.round(dx), dy: Math.round(dy) }, screen: (L.dispAt(this.myDisplays, bx, by) || {}).mmw }); }
     }
     this.placed(this.virt.x, this.virt.y);
     this.lastSet = { x: Math.round(this.virt.x), y: Math.round(this.virt.y) };

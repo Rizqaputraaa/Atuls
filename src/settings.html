@@ -154,6 +154,7 @@ function pageActivation() {
   const t = S.trigger;
   return [
     h('h2', {}, 'Activation'), h('div', { class: 'sub' }, 'How the wheel opens. Press the trigger again, or the logo in the middle, to close it.'),
+    h('div', { class: 'card' }, row('Use the radial menu', 'The wheel needs its own hidden window, which keeps about 100 MB of memory while it exists and a little processor time when it opens. Switch it off if you do not use it: nothing is created and nothing waits. When it is on, the window is released again a minute after the wheel was last used.', toggle(S.startup.radialOn !== false, async (v) => { S.startup = await A.startupSet({ radialOn: v }); toast('Saved'); }))),
     h('div', { class: 'group' }, 'Mouse'),
     h('div', { class: 'card' },
       row('Mouse trigger', 'Open the wheel with a mouse button. Side buttons are usually free; left and right stay with the system.',

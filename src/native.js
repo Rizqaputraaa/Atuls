@@ -488,7 +488,7 @@ function setPhysicalBlock(on) {
       addSource(mainLoop(), makeSource(null, st.port, 0), commonModes);
       enable(st.port, false); // off until needed
       st.cb = cb;
-      st.log = setInterval(() => { if (st.blocking && st.stats.seen) console.log('[island] master lock: seen ' + st.stats.seen + ', swallowed ' + st.stats.swallowed + ', from programs ' + st.stats.prog + ', first ' + st.stats.first.join(' ')); }, 4000);
+      st.log = setInterval(() => { if (st.blocking && st.stats.seen && st.stats.seen !== st.loggedSeen) st.loggedSeen = st.stats.seen, console.log('[island] master lock: seen ' + st.stats.seen + ', swallowed ' + st.stats.swallowed + ', from programs ' + st.stats.prog + ', first ' + st.stats.first.join(' ')); }, 4000);
       if (st.log.unref) st.log.unref();
       process.once('exit', () => { try { enable(st.port, false); assoc(true); } catch {} });
       blockTap = st;
@@ -789,7 +789,9 @@ const macMovePost = (x, y, heldButton) => macPost(heldButton && CG_BUTTON[heldBu
 const macMouse = {
   // is the left button held down right now (a drag is under way)
   // is this button (0 left, 1 right, 2 middle) held, read from the hardware state: it does not depend on events being delivered
-  buttonHeld: (b) => { try { const api = loadCG(); if (!api.btn) api.btn = koffi.load('/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices').func('bool CGEventSourceButtonState(int32_t state, uint32_t button)'); return !!api.btn(1, b); } catch { return false; } },
+  buttonHeld: (b) => { try { const api = loadCG(); if (!api.btn) api.btn = koffi.load('/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices').func('bool CGEventSourceButtonState(int32_t state, uint32_t button)'); if (api.btn(1, b)) return true; } catch {}
+    // CGEventSourceButtonState reads false during a real drag on some Macs (the text selection would end at once): AppKit knows the held buttons too (bit 0 = left, 1 = right, 2 = middle)
+    try { const o = loadObjc(); return !!(o && (Number(o.i0(o.cls('NSEvent'), o.sel('pressedMouseButtons'))) & (1 << b))); } catch { return false; } },
   leftDown: () => { try { const api = loadCG(); if (!api.btn) api.btn = koffi.load('/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices').func('bool CGEventSourceButtonState(int32_t state, uint32_t button)'); if (api.btn(1, 0)) return true; } catch {}
     // CGEventSourceButtonState reads false for real drags on some Macs: ask AppKit for the held buttons too (bit 0 = left)
     try { const o = loadObjc(); return !!(o && (Number(o.i0(o.cls('NSEvent'), o.sel('pressedMouseButtons'))) & 1)); } catch { return false; } },
