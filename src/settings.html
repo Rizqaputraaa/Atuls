@@ -147,7 +147,15 @@ const slider = (min, max, step, value, unit, on, fmt) => {
   const inp = h('input', { type: 'range', min, max, step, value, oninput: () => { out.textContent = show(+inp.value); on(+inp.value); } });
   return h('div', { class: 'slider' }, inp, out);
 };
-const iconOf = (it) => it.kind === 'app' && S.icons[it.path] ? h('img', { src: S.icons[it.path], alt: '' }) : h('span', { html: W.ICONS[it.kind] || W.ICONS.app });
+S.itemIcons = {}; const iconAsked = new Set();
+const iconKey = (it) => it.kind + '|' + (it.url || it.path) + '|' + (it.logo || '');
+const iconOf = (it) => {
+  if (it.kind === 'app' && S.icons[it.path] && !it.logo) return h('img', { src: S.icons[it.path], alt: '' });
+  const k = iconKey(it);
+  if (S.itemIcons[k]) return h('img', { src: S.itemIcons[k], alt: '' });
+  if (!iconAsked.has(k)) { iconAsked.add(k); window.rs.itemIcon(it).then((u) => { if (u) { S.itemIcons[k] = u; if (page === 'workspaces') draw(); } }).catch(() => {}); }
+  return h('span', { html: W.ICONS[it.kind] || W.ICONS.app });
+};
 
 // ---------------------------------------------------------------- Activation
 function pageActivation() {
@@ -207,14 +215,14 @@ function pageWorkspaces() {
     cfg.items.length ? null : h('div', { class: 'note' }, 'The wheel is empty.'),
     h('div', { class: 'adders' },
       h('button', { class: 'btn', disabled: cfg.items.length >= L.items, onclick: () => { cfg.items.push({ type: 'action', action: S.actions[0].id }); save(true); } }, '+ Quick action'),
-      h('button', { class: 'btn', disabled: cfg.items.length >= L.items || !cfg.workspaces.length, onclick: () => { cfg.items.push({ type: 'workspace', ws: cfg.workspaces[0].id }); save(true); } }, '+ Workspace')));
+      h('button', { class: 'btn', disabled: cfg.items.length >= L.items || !cfg.workspaces.length, onclick: () => { const free = cfg.workspaces.find((w) => !cfg.items.some((it) => it.type === 'workspace' && it.ws === w.id)) || cfg.workspaces[0]; cfg.items.push({ type: 'workspace', ws: free.id }); save(true); } }, '+ Workspace')));
 
   const cards = cfg.workspaces.map((w) => workspaceCard(w));
   return [
     h('h2', {}, 'Wheel & workspaces'), h('div', { class: 'sub' }, 'Choose what sits on the wheel. A workspace is a group of apps, links and folders that opens as its own ring.'),
     h('div', { class: 'group' }, `Wheel (${cfg.items.length} of ${L.items})`), ring,
     h('div', { class: 'group' }, `Workspaces (${cfg.workspaces.length} of ${L.workspaces})`), cards,
-    h('button', { class: 'btn primary', disabled: cfg.workspaces.length >= L.workspaces, onclick: () => { cfg.workspaces.push({ id: 'w' + Math.random().toString(36).slice(2, 8), name: 'New workspace', items: [] }); save(true); } }, '+ New workspace'),
+    h('button', { class: 'btn primary', disabled: cfg.workspaces.length >= L.workspaces, onclick: () => { const id = 'w' + Math.random().toString(36).slice(2, 8); cfg.workspaces.push({ id, name: 'New workspace', items: [] }); if (cfg.items.length < L.items) cfg.items.push({ type: 'workspace', ws: id }); /* it shows up on the wheel at once */ save(true); } }, '+ New workspace'),
   ];
 }
 
@@ -233,6 +241,8 @@ function workspaceCard(w) {
       h('div', { class: 'pic' }, iconOf(it)),
       h('input', { class: 'txt nm', value: it.name, maxlength: 60, oninput: (e) => { it.name = e.target.value; save(false); } }),
       h('span', { class: 'kind' }, it.kind === 'app' ? 'App' : it.kind === 'url' ? 'Link' : 'Folder'),
+      h('button', { class: 'btn', title: 'Choose a picture as the icon' + (it.logo ? ' (a picture is set)' : ''), onclick: async () => { const p = await window.rs.pickIcon(); if (p) { it.logo = p; save(true); } } }, 'Icon'),
+      it.logo ? h('button', { class: 'ico', title: 'Back to the normal icon', onclick: () => { it.logo = ''; save(true); } }, '↺') : null,
       h('button', { class: 'ico', title: 'Move up', disabled: i === 0, onclick: () => { [w.items[i - 1], w.items[i]] = [w.items[i], w.items[i - 1]]; save(true); } }, '↑'),
       h('button', { class: 'ico', title: 'Move down', disabled: i === w.items.length - 1, onclick: () => { [w.items[i + 1], w.items[i]] = [w.items[i], w.items[i + 1]]; save(true); } }, '↓'),
       h('button', { class: 'ico', title: 'Remove', onclick: () => { w.items.splice(i, 1); save(true); } }, '✕')))),

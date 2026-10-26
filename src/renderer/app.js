@@ -467,6 +467,12 @@ const renderLink = (s) => {
   $('#peer-actions').hidden = !s.connected;
   $('#peer-side-row').hidden = !s.connected;
   renderMaster(s);
+  // this computer's own mouse and keyboard are off (the other one is the master): say so, and how to take over
+  const lk = !!(s.connected && s.master && s.master.locked);
+  $('#pill-lock').hidden = !lk;
+  $('#lock-banner').hidden = !lk;
+  $('#lock-banner').textContent = 'Locked · ' + String(s.peerName || 'the other computer').replace(/.local$/, '') + ' is master';
+  $('#lock-banner').title = 'This mouse and keyboard are switched off because the other computer is the master. Ctrl+Alt+M here takes over.';
   setRole(!!(s.connected && s.master && s.master.on && s.master.peer), !!(s.connected && s.master && s.master.on && s.master.mine));
   document.querySelectorAll('#peer-side button').forEach((b) => b.classList.toggle('on', b.dataset.side === s.peerSide));
   if (s.connected) {

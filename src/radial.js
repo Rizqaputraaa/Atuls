@@ -50,8 +50,8 @@ function sanitize(c) {
     for (const it of (Array.isArray(w && w.items) ? w.items : []).slice(0, LIMIT.shortcuts)) {
       const kind = it && it.kind;
       if (kind === 'app' && str(it.path, 500)) items.push({ kind, path: str(it.path, 500), name: str(it.name, 60) || appName(it.path), logo: str(it.logo, 500) });
-      else if (kind === 'folder' && str(it.path, 500)) items.push({ kind, path: str(it.path, 500), name: str(it.name, 60) || path.basename(it.path) });
-      else if (kind === 'url' && /^(https?:\/\/|mailto:)/i.test(str(it.url, 800))) items.push({ kind, url: str(it.url, 800), name: str(it.name, 60) || str(it.url, 800).replace(/^https?:\/\/(www\.)?/i, '').split('/')[0] });
+      else if (kind === 'folder' && str(it.path, 500)) items.push({ kind, path: str(it.path, 500), name: str(it.name, 60) || path.basename(it.path), logo: str(it.logo, 500) });
+      else if (kind === 'url' && /^(https?:\/\/|mailto:)/i.test(str(it.url, 800))) items.push({ kind, url: str(it.url, 800), name: str(it.name, 60) || str(it.url, 800).replace(/^https?:\/\/(www\.)?/i, '').split('/')[0], logo: str(it.logo, 500) });
     }
     out.workspaces.push({ id, name: str(w && w.name, 30) || 'Workspace', items });
   }
@@ -119,6 +119,41 @@ async function appIcon(p, logo) {
   }
   iconCache.set(key, url);
   return url;
+}
+
+// The icon of a link: a picture the user chose, else the site's own icon (https://site/favicon.ico, then the icon service of Google as a second try:
+// only the site name is asked there). Remembered on disk, so the wheel does not need the network after the first time.
+const FAV_FILE = () => path.join(app.getPath('userData'), 'radial-icons.json');
+let favCache = null;
+const favLoad = () => { if (!favCache) { try { favCache = JSON.parse(fs.readFileSync(FAV_FILE(), 'utf8')); } catch { favCache = {}; } } return favCache; };
+const favSave = () => { try { const k = Object.keys(favCache); if (k.length > 200) for (const x of k.slice(0, k.length - 150)) delete favCache[x]; fs.writeFileSync(FAV_FILE(), JSON.stringify(favCache)); } catch {} };
+async function fetchIcon(u) {
+  const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), 5000);
+  try {
+    const r = await fetch(u, { signal: ctl.signal, headers: { 'User-Agent': 'A-tuls' } });
+    if (!r.ok) return '';
+    const buf = Buffer.from(await r.arrayBuffer());
+    if (!buf.length || buf.length > 400000) return '';
+    const img = nativeImage.createFromBuffer(buf);
+    return img.isEmpty() ? '' : img.resize({ width: 64 }).toDataURL();
+  } catch { return ''; } finally { clearTimeout(t); }
+}
+async function linkIcon(u, logo) {
+  if (logo) { try { const img = nativeImage.createFromPath(logo); if (!img.isEmpty()) return img.resize({ width: 64 }).toDataURL(); } catch {} }
+  let host = '';
+  try { const x = new URL(u); if (!/^https?:$/.test(x.protocol)) return ''; host = x.hostname; } catch { return ''; }
+  const c = favLoad();
+  if (c[host] !== undefined) return c[host];
+  let url = await fetchIcon('https://' + host + '/favicon.ico');
+  if (!url) url = await fetchIcon('https://www.google.com/s2/favicons?domain=' + encodeURIComponent(host) + '&sz=64');
+  if (url) { c[host] = url; favSave(); } // (a failed try is not remembered: the network may have been away)
+  return url;
+}
+async function itemIcon(it) {
+  if (!it) return '';
+  if (it.kind === 'url') return linkIcon(it.url, it.logo);
+  if (it.kind === 'app' || it.kind === 'folder') return appIcon(it.path, it.logo);
+  return '';
 }
 
 function launch(item) {
@@ -211,7 +246,7 @@ async function payload(cfg) {
     const items = [];
     for (let i = 0; i < w.items.length; i++) {
       const it = w.items[i];
-      items.push({ kind: it.kind, label: it.name, icon: it.kind === 'app' ? await appIcon(it.path, it.logo) : '', ws: w.id, index: i });
+      items.push({ kind: it.kind, label: it.name, icon: await itemIcon(it), ws: w.id, index: i });
     }
     workspaces[w.id] = { name: w.name, items };
   }
@@ -343,6 +378,11 @@ function init(deps) {
   });
   ipcMain.handle('rs:search', (_e, q) => searchApps(q));
   ipcMain.handle('rs:icon', (_e, p, logo) => appIcon(String(p), logo));
+  ipcMain.handle('rs:itemicon', (_e, it) => itemIcon(it && typeof it === 'object' ? { kind: it.kind, path: String(it.path || ''), url: String(it.url || ''), logo: String(it.logo || '') } : null));
+  ipcMain.handle('rs:pickicon', async () => {
+    const r = await dialog.showOpenDialog(settingsWin || undefined, { title: 'Choose an icon', properties: ['openFile'], filters: [{ name: 'Pictures', extensions: ['png', 'jpg', 'jpeg', 'webp', 'ico', 'bmp', 'gif'] }] });
+    return r.canceled || !r.filePaths[0] ? '' : r.filePaths[0];
+  });
   ipcMain.handle('rs:folder', async () => {
     const r = await dialog.showOpenDialog(settingsWin || undefined, { title: 'Choose a folder', properties: ['openDirectory'] });
     return r.canceled || !r.filePaths[0] ? null : { path: r.filePaths[0], name: path.basename(r.filePaths[0]) || r.filePaths[0] };
@@ -352,4 +392,4 @@ function init(deps) {
   setTimeout(() => loadStoreApps(), 6000); // so the first search is instant
 }
 
-module.exports = { init, open, close, setEnabled, openSettings, sendSettings, get isOpen() { return isOpen; } };
+module.exports = { itemIcon, init, open, close, setEnabled, openSettings, sendSettings, get isOpen() { return isOpen; } };

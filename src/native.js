@@ -266,6 +266,23 @@ function highResTimer() {
 // ---- Windows: hide the system cursor while this computer controls another one ----
 const SYSTEM_CURSORS = [32512, 32513, 32514, 32515, 32516, 32642, 32643, 32644, 32645, 32646, 32648, 32649, 32650];
 let cursorFns = null;
+// Windows, colour picker: every pointer shape becomes the crosshair while the picker is live (put back with SPI_SETCURSORS, also when the app ends)
+let crossFns = null;
+function setCrossCursor(on) {
+  const api = loadWin();
+  if (!api) return false;
+  try {
+    if (!crossFns) crossFns = {
+      load: api.user32.func('void *__stdcall LoadCursorW(void *hInst, uintptr_t name)'),
+      copy: api.user32.func('void *__stdcall CopyIcon(void *h)'),
+      set: api.user32.func('bool __stdcall SetSystemCursor(void *hcur, uint32_t id)'),
+      spi: api.user32.func('bool __stdcall SystemParametersInfoW(uint32_t action, uint32_t param, void *pv, uint32_t ini)'),
+    };
+    if (!on) return crossFns.spi(0x57 /* SPI_SETCURSORS */, 0, null, 0);
+    for (const id of SYSTEM_CURSORS) crossFns.set(crossFns.copy(crossFns.load(null, 32515 /* IDC_CROSS */)), id);
+    return true;
+  } catch (e) { console.error('[island] crosshair cursor failed:', e.message); return false; }
+}
 function setCursorHidden(hide) {
   const api = loadWin();
   if (!api) return false;
@@ -907,4 +924,4 @@ function winLeftDown() {
   } catch { return false; }
 }
 
-module.exports = { reassertMouseFree, macAssociate, winKeyDown, setPhysicalBlock, winCtrlAlt, winUserState, winLeftDown, winClipboardSeq, macInputMonitoring, macDisplaySizes, winMonitorSizes, refreshWinMonitorSizes, matchSizes, reinstallHooks, removeHooks, winIdleMs, winModsHeld, installScrollTap, highResTimer, winCursor, setCursorHidden, installKeyBlocker, installMouseHook, macMouse, macMediaKey, macDragFiles, screenPixels, macHotKeyInfo, macPostHotKey, loadWin: () => loadWin() };
+module.exports = { setCrossCursor, reassertMouseFree, macAssociate, winKeyDown, setPhysicalBlock, winCtrlAlt, winUserState, winLeftDown, winClipboardSeq, macInputMonitoring, macDisplaySizes, winMonitorSizes, refreshWinMonitorSizes, matchSizes, reinstallHooks, removeHooks, winIdleMs, winModsHeld, installScrollTap, highResTimer, winCursor, setCursorHidden, installKeyBlocker, installMouseHook, macMouse, macMediaKey, macDragFiles, screenPixels, macHotKeyInfo, macPostHotKey, loadWin: () => loadWin() };

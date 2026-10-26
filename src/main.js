@@ -357,6 +357,7 @@ function pollMacDrop() {
 // and the next click copies it as #RRGGBB. The click never reaches the app below (it is swallowed by the input hook).
 let loupeWin = null, picking = false, pickFinish = null, pickTimer = null, pickGuard = null;
 function closePicker() {
+  if (process.platform === 'win32') native.setCrossCursor(false); // the normal pointer shapes come back
   clearInterval(pickTimer); pickTimer = null; clearTimeout(pickGuard); pickGuard = null;
   try { require('electron').globalShortcut.unregister('Escape'); } catch {}
   if (link) link.picker = null;
@@ -439,6 +440,7 @@ async function pickColor() {
     pickTimer = setInterval(sample, 16);
     pickGuard = setTimeout(() => done(null), 60000); // failsafe
     console.log('[island] picker: live');
+    if (process.platform === 'win32') native.setCrossCursor(true); // the pointer looks like a crosshair while the picker is live
   } catch (e) {
     console.error('[island] color picker failed:', e.message);
     closePicker(); picking = false; pickFinish = null;
@@ -1445,6 +1447,7 @@ app.whenReady().then(() => {
       else if (c === 'ovclick') { if (overlay && !overlay.isDestroyed()) { for (const t of ['mouseDown', 'mouseUp']) overlay.webContents.sendInputEvent({ type: t, x: 200, y: 200, button: 'left', clickCount: 1 }); lifecycle.line('test: synthetic click sent to the overlay (link state ' + link.state + ')'); } else lifecycle.line('test: no overlay'); }
       else if (c === 'assoctest') { hookLogUntil = Date.now() + 16000; lifecycle.line('test: mouse disconnected from the cursor for 14 s: ' + native.macAssociate(false)); setTimeout(() => lifecycle.line('test: mouse connected again: ' + native.macAssociate(true)), 14000); }
       else if (c === 'radialtest') radial.open('test');
+      else if (c.startsWith('linkicon:')) { const t0 = Date.now(); radial.itemIcon({ kind: 'url', url: c.slice(9) }).then((u) => lifecycle.line('test: link icon ' + c.slice(9) + ' -> ' + (u ? u.length + ' chars' : 'none') + ' in ' + (Date.now() - t0) + ' ms')); }
       else if (c === 'unlock') { if (overlay && !overlay.isDestroyed()) overlay.webContents.executeJavaScript('document.exitPointerLock && document.exitPointerLock()', true).catch(() => {}); } // test: lose the pointer lock
       else if (c.startsWith('movetest:')) { // takes control, moves the other computer's pointer n steps of (dx,dy), gives control back
         const [dx, dy, n, gap] = c.slice(9).split(',').map(Number);

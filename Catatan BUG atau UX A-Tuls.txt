@@ -1,9 +1,4 @@
-Catatan BUG atau UX A-Tuls
-
-1. Pas pencet mouse pc untuk button back dan forwardnya untuk back di file explorer langsung ada lag lag padahal sebelumnya aman.
-2. Beberapa waktu pandai disconnected, itu kenapa, dan kalau disconnected berikan notifikasi.
-3. Icon di tray ga ada
-
-DONE
-
-1. Notif Accessnya itu kalau udah dijalankan diberikan notif kalau udah done di berikan akses biar ga bingung dan notif di mac selalu muncul terus padahal udah di acc
+1. Tidak ada workspace baru padahal ada 2 workspace yang dibuat, dan kalau pake link misalkan youtube dll tidak ada iconnya. dan buat agar user bisa ganti iconnya.
+2. Pas PC jadi master, tidak bisa ngeclik, begitu jua pas mac jadi master, tidak bsia ngeclik device lain
+3. pas pick color, cursornya tidak berubah seperti pick color, fungsi lain berfungsi cuman tampilan saja
+4. Ini kenapa button combo untuk screen shootnya tidak bisa, button combo back dan forward
