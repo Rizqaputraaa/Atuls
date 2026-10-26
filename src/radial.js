@@ -309,6 +309,7 @@ const front = () => {
   if (!settingsWin || settingsWin.isDestroyed()) return;
   // the island is a non-activating window, so a new window would stay behind the others: bring it to the front explicitly
   if (MAC) { try { app.setActivationPolicy('regular'); app.dock.show(); } catch {} app.focus({ steal: true }); }
+  if (MAC) { try { settingsWin.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true }); setTimeout(() => { try { if (settingsWin && !settingsWin.isDestroyed()) settingsWin.setVisibleOnAllWorkspaces(false); } catch {} }, 1500); settingsWin.moveTop(); } catch {} } // opens on the current Space, not on another one
   settingsWin.show(); settingsWin.focus();
   if (!MAC) { settingsWin.setAlwaysOnTop(true); settingsWin.setAlwaysOnTop(false); }
 };
@@ -392,4 +393,5 @@ function init(deps) {
   setTimeout(() => loadStoreApps(), 6000); // so the first search is instant
 }
 
-module.exports = { itemIcon, init, open, close, setEnabled, openSettings, sendSettings, get isOpen() { return isOpen; } };
+const evalSettings = (code) => (settingsWin && !settingsWin.isDestroyed() ? settingsWin.webContents.executeJavaScript(code) : Promise.resolve('no settings window')); // development tests
+module.exports = { evalSettings, itemIcon, init, open, close, setEnabled, openSettings, sendSettings, get isOpen() { return isOpen; } };

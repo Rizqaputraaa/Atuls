@@ -13,7 +13,9 @@
   main::-webkit-scrollbar-thumb { background: #3a3a3f; border-radius: 4px; }
   main::-webkit-scrollbar-track { background: transparent; }
   aside { overflow-y: auto; width: 210px; flex: none; background: #101012; border-right: 1px solid var(--line); padding: 22px 12px 16px; display: flex; flex-direction: column; }
-  aside h1 { font-size: 16px; padding: 0 10px 18px; }
+  aside h1 { font-size: 16px; padding: 0 10px 12px; }
+  .search { width: 100%; margin: 0 0 12px; padding: 8px 12px; border-radius: 10px; border: 1px solid var(--line); background: #1b1b1e; color: var(--fg); font: inherit; font-size: 13px; outline: none; }
+  .search:focus { border-color: var(--accent); }
   aside button { display: flex; align-items: center; gap: 10px; width: 100%; padding: 9px 12px; margin-bottom: 3px; border: 0; border-radius: 10px; background: transparent; color: var(--dim); font: inherit; font-size: 13.5px; cursor: pointer; text-align: left; }
   aside button:hover { background: #1b1b1e; color: var(--fg); }
   aside button.on { background: var(--accent); color: #fff; }
@@ -101,6 +103,7 @@
 <div id="app">
   <aside>
     <h1>Settings</h1>
+    <input id="q" class="search" placeholder="Search settings" autocomplete="off" spellcheck="false">
     <button data-p="general"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>General</button>
     <div class="grp">Input</div>
     <button data-p="pointer"><svg viewBox="0 0 24 24"><path d="M5 3l14 7-6 2-2 6z"/></svg>Pointer &amp; switching</button>
@@ -147,13 +150,13 @@ const slider = (min, max, step, value, unit, on, fmt) => {
   const inp = h('input', { type: 'range', min, max, step, value, oninput: () => { out.textContent = show(+inp.value); on(+inp.value); } });
   return h('div', { class: 'slider' }, inp, out);
 };
-S.itemIcons = {}; const iconAsked = new Set();
+const itemIcons = {}; const iconAsked = new Set(); // (icons of links and folders, asked for when first shown)
 const iconKey = (it) => it.kind + '|' + (it.url || it.path) + '|' + (it.logo || '');
 const iconOf = (it) => {
   if (it.kind === 'app' && S.icons[it.path] && !it.logo) return h('img', { src: S.icons[it.path], alt: '' });
   const k = iconKey(it);
-  if (S.itemIcons[k]) return h('img', { src: S.itemIcons[k], alt: '' });
-  if (!iconAsked.has(k)) { iconAsked.add(k); window.rs.itemIcon(it).then((u) => { if (u) { S.itemIcons[k] = u; if (page === 'workspaces') draw(); } }).catch(() => {}); }
+  if (itemIcons[k]) return h('img', { src: itemIcons[k], alt: '' });
+  if (!iconAsked.has(k)) { iconAsked.add(k); window.rs.itemIcon(it).then((u) => { if (u) { itemIcons[k] = u; if (page === 'workspaces') draw(); } }).catch(() => {}); }
   return h('span', { html: W.ICONS[it.kind] || W.ICONS.app });
 };
 
@@ -536,16 +539,44 @@ function pageCalendar() {
 
 // ---------------------------------------------------------------- shell
 const PAGES = { calendar: pageCalendar, general: pageGeneral, pointer: pagePointer, scrolling: pageScrolling, buttons: pageButtons, shortcuts: pageShortcuts, activation: pageActivation, appearance: pageAppearance, workspaces: pageWorkspaces, color: pageColor, sharing: pageSharing, diagnostics: pageDiagnostics };
+// Search: every page builds its rows live, so the rows that match are taken from there (with their working controls) and shown together
+let query = '';
+const pageLabels = {};
+document.querySelectorAll('aside button[data-p]').forEach((b) => { pageLabels[b.dataset.p] = b.textContent.trim(); });
+const goPage = (p) => { query = ''; $q.value = ''; page = p; A.log('settings page -> ' + page); $main.scrollTop = 0; draw(); };
+function searchResults() {
+  const toks = query.toLowerCase().split(/\s+/).filter(Boolean);
+  const out = [h('h2', {}, 'Search'), h('div', { class: 'sub' }, 'Results for "' + query + '"')];
+  let n = 0;
+  for (const p of Object.keys(PAGES)) {
+    let els = [];
+    try { els = PAGES[p]().flat(); } catch { continue; }
+    const holder = document.createElement('div');
+    els.forEach((e) => e && holder.append(e));
+    const rows = [...holder.querySelectorAll('.row')].filter((r) => { const t = r.textContent.toLowerCase(); return toks.every((k) => t.includes(k)); });
+    const labelHit = toks.every((k) => (pageLabels[p] || '').toLowerCase().includes(k));
+    if (!rows.length && !labelHit) continue;
+    n += rows.length || 1;
+    out.push(h('div', { class: 'group', style: 'cursor:pointer', title: 'Open this page', onclick: () => goPage(p) }, (pageLabels[p] || p) + '  \u203a'));
+    out.push(rows.length ? h('div', { class: 'card' }, rows) : h('div', { class: 'card' }, h('div', { class: 'row' }, h('div', { class: 't' }, h('b', {}, pageLabels[p] || p), h('span', {}, 'Open this page')), h('button', { class: 'btn', onclick: () => goPage(p) }, 'Open'))));
+  }
+  if (!n) out.push(h('div', { class: 'note' }, 'No setting matches that.'));
+  return out;
+}
 function draw() {
-  document.querySelectorAll('aside button').forEach((b) => b.classList.toggle('on', b.dataset.p === page));
+  document.querySelectorAll('aside button').forEach((b) => b.classList.toggle('on', !query && b.dataset.p === page));
   const y = $main.scrollTop;
   $main.innerHTML = '';
   if (S.perm === false) $main.append(h('div', { class: 'banner' }, 'Allow Accessibility and Input Monitoring for this app in System Settings, then it starts working automatically.'));
-  $main.append(...(PAGES[page] || pagePointer)().flat()); // some pages return nested lists (e.g. one card per workspace)
+  $main.append(...(query ? searchResults() : (PAGES[page] || pagePointer)()).flat()); // some pages return nested lists (e.g. one card per workspace)
   $main.scrollTop = y;
   updateGaze();
 }
-document.querySelectorAll('aside button').forEach((b) => b.addEventListener('click', () => { page = b.dataset.p; A.log('settings page -> ' + page); $main.scrollTop = 0; draw(); }));
+const $q = document.getElementById('q');
+document.querySelectorAll('aside button').forEach((b) => b.addEventListener('click', () => { goPage(b.dataset.p); }));
+$q.addEventListener('input', () => { query = $q.value.trim(); $main.scrollTop = 0; draw(); });
+$q.addEventListener('keydown', (e) => { if (e.key === 'Escape') { $q.value = ''; query = ''; draw(); } });
+document.addEventListener('keydown', (e) => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f') { e.preventDefault(); $q.focus(); $q.select(); } });
 A.onGaze((g) => { if (!S) return; S.gaze = g; updateGaze(); });
 A.onColors((l) => { if (!S) return; S.colors = l; if (page === 'color') draw(); });
 A.onPerm((ok) => { if (!S) return; S.perm = ok; draw(); });
