@@ -25,6 +25,7 @@ const OPPOSITE = { left: 'right', right: 'left', top: 'bottom', bottom: 'top' };
 const DRIFT = 150;
 const native = require('./native');
 // mouse messages -> [button, direction]
+const WBTN = { L: 1, R: 2, M: 3 }; // the button numbers sent to the other computer
 const BTN = { 0x201: ['L', 'down'], 0x202: ['L', 'up'], 0x204: ['R', 'down'], 0x205: ['R', 'up'], 0x207: ['M', 'down'], 0x208: ['M', 'up'] };
 const DOM_NAMES = {
   ControlLeft: 'Ctrl', ControlRight: 'CtrlRight', AltLeft: 'Alt', AltRight: 'AltRight',
@@ -67,6 +68,7 @@ class Link extends EventEmitter {
     this.relMoves = 0;
     this.sideHeld = new Set();
     this.swallowedBtn = new Set();
+    this.fwdBtn = new Set(); // swallowed presses this hook forwarded itself (the release is forwarded too)
     this.xDown = new Set();
     this.xTimers = new Map();
     this.xChord = new Set();
@@ -214,7 +216,7 @@ class Link extends EventEmitter {
   adoptMaster(cfg) {
     this._m = cfg;
     this.store.set('master', cfg);
-    this.swallowedBtn.clear();
+    this.swallowedBtn.clear(); this.fwdBtn.clear();
     this.notify();
     this.emit('master', this.status().master);
   }
@@ -690,8 +692,13 @@ class Link extends EventEmitter {
         if (a && a !== 'default') { this.swallowedBtn.add('M'); this.runAction(a, 'middle', 0); return true; }
       }
       if (b) {
-        if (b[1] === 'up') { if (this.swallowedBtn.delete(b[0])) { if (b[0] === 'M') this.emit('middle-up'); return true; } }
-        else if (this.state === 'controlling' && this.external) { this.swallowedBtn.add(b[0]); return true; }
+        if (b[1] === 'up') { if (this.swallowedBtn.delete(b[0])) { if (this.fwdBtn.delete(b[0])) this.onLocalButton(false, WBTN[b[0]]); if (b[0] === 'M') this.emit('middle-up'); return true; } }
+        else if (this.state === 'controlling' && this.external) {          // This hook swallows the press, so it forwards it itself: the input library (uiohook) only hears it when it sits above this hook,
+          // and after the hooks are put back (unlock, sleep, a silent drop) this one is on top. The first of the two reports wins (see onLocalButton).
+          this.swallowedBtn.add(b[0]); this.fwdBtn.add(b[0]);
+          this.onLocalButton(true, WBTN[b[0]], 0);
+          return true;
+        }
       }
       if (msg === 0x20B || msg === 0x20C) return this.onXButton(msg, i);
     }
@@ -1165,7 +1172,7 @@ class Link extends EventEmitter {
   // Emergency exit (global shortcut): give mouse, buttons and keys back to this computer whatever state things are in.
   panic() {
     this.dc('panic');
-    this.swallowedBtn.clear(); this.xDown.clear(); this.xChord.clear(); this.xSent.clear(); this.xReplayed.clear();
+    this.swallowedBtn.clear(); this.fwdBtn.clear(); this.xDown.clear(); this.xChord.clear(); this.xSent.clear(); this.xReplayed.clear();
     for (const t of this.xTimers.values()) clearTimeout(t);
     this.xTimers.clear();
     this.midSwallowed = false; this.midRemote = false; this.chordActive = false; this.sideHeld.clear();
@@ -1329,6 +1336,14 @@ class Link extends EventEmitter {
     }
   }
 
+  // press number within a double click (the Windows hook does not count them): the same button again within the system double-click time
+  winClicks(button) {
+    const now = Date.now(), p = this.lastPress || {};
+    const n = p.b === button && now - p.t < 500 ? Math.min(3, p.n + 1) : 1;
+    this.lastPress = { b: button, t: now, n };
+    return n;
+  }
+
   onLocalButton(down, button, clicks = 1) {
     if (this.state !== 'controlled') this.physicalAt = Date.now();
     if (button === 4 || button === 5) this.sideChord(down, button);
@@ -1341,6 +1356,7 @@ class Link extends EventEmitter {
     this.btnSentAt = this.btnSentAt || {};
     if (Date.now() - (this.btnSentAt[bk] || 0) < 60) return;
     this.btnSentAt[bk] = Date.now();
+    if (down && !clicks) clicks = this.winClicks(button); // 0 = the caller cannot count the presses of a double click
     this.dc(down ? 'btn.tx' : 'btn.tx.up');
     if (down && (this.btnTxLog = (this.btnTxLog || 0) + 1) <= 6) { try { require('./lifecycle').line('button ' + button + ' sent to the other computer'); } catch {} }
     this.send({ t: down ? 'down' : 'up', b: button, n: clicks });

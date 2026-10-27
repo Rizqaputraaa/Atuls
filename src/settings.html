@@ -70,6 +70,11 @@
   .item + .item { border-top: 1px solid var(--line); }
   .item .pic { width: 32px; height: 32px; border-radius: 9px; background: #121214; border: 1px solid var(--line); display: flex; align-items: center; justify-content: center; flex: none; overflow: hidden; }
   .item .pic img { width: 22px; height: 22px; }
+  .head .pic { width: 32px; height: 32px; border-radius: 9px; background: #121214; border: 1px solid var(--line); display: flex; align-items: center; justify-content: center; flex: none; overflow: hidden; }
+  .head .pic img { width: 22px; height: 22px; }
+  .head .pic svg { width: 18px; height: 18px; fill: none; stroke: var(--dim); stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+  .item .pic.click, .head .pic.click { cursor: pointer; }
+  .item .pic.click:hover, .head .pic.click:hover { border-color: #0a84ff; }
   .item .pic svg { width: 18px; height: 18px; fill: none; stroke: var(--dim); stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
   .item .nm { flex: 1; min-width: 0; }
   .item .kind { color: var(--dim); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
@@ -160,6 +165,15 @@ const iconOf = (it) => {
   return h('span', { html: W.ICONS[it.kind] || W.ICONS.app });
 };
 
+// the icon of a wheel entry or a workspace: click it to choose a picture of your own (the arrow button next to it puts the normal one back)
+const logoPic = (logo, fallback, set) => {
+  const k = 'logo|' + logo;
+  if (logo && !itemIcons[k] && !iconAsked.has(k)) { iconAsked.add(k); window.rs.itemIcon({ kind: 'logo', logo }).then((u) => { if (u) { itemIcons[k] = u; if (page === 'workspaces') draw(); } }).catch(() => {}); }
+  return h('div', { class: 'pic click', title: 'Click to choose your own icon', onclick: async () => { const p = await window.rs.pickIcon(); if (p) set(p); } },
+    logo && itemIcons[k] ? h('img', { src: itemIcons[k], alt: '' }) : h('span', { html: fallback }));
+};
+const logoReset = (logo, set) => (logo ? h('button', { class: 'ico', title: 'Back to the normal icon', onclick: () => set('') }, '↺') : null);
+
 // ---------------------------------------------------------------- Activation
 function pageActivation() {
   const t = S.trigger;
@@ -207,14 +221,15 @@ function pageWorkspaces() {
   const cfg = S.cfg, L = S.limit;
   // the items on the main ring
   const ring = h('div', { class: 'card list' },
-    cfg.items.map((it, i) => h('div', { class: 'item' },
-      h('div', { class: 'pic', html: W.ICONS[it.type === 'action' ? it.action : 'workspace'] }),
+    cfg.items.map((it, i) => { const tgt = it.type === 'workspace' ? cfg.workspaces.find((w) => w.id === it.ws) : it, setLogo = (p) => { if (tgt) { tgt.logo = p; save(true); } }; return h('div', { class: 'item' },
+      logoPic(tgt && tgt.logo, W.ICONS[it.type === 'action' ? it.action : 'workspace'], setLogo),
       h('select', { class: 'nm', onchange: (e) => { const v = e.target.value; cfg.items[i] = v.startsWith('a:') ? { type: 'action', action: v.slice(2) } : { type: 'workspace', ws: v.slice(2) }; save(true); } },
         h('optgroup', { label: 'Quick actions' }, S.actions.map((a) => h('option', { value: 'a:' + a.id, selected: it.type === 'action' && it.action === a.id }, a.label))),
         h('optgroup', { label: 'Workspaces' }, cfg.workspaces.map((w) => h('option', { value: 'w:' + w.id, selected: it.type === 'workspace' && it.ws === w.id }, w.name)))),
+      logoReset(tgt && tgt.logo, setLogo),
       h('button', { class: 'ico', title: 'Move up', disabled: i === 0, onclick: () => { [cfg.items[i - 1], cfg.items[i]] = [cfg.items[i], cfg.items[i - 1]]; save(true); } }, '↑'),
       h('button', { class: 'ico', title: 'Move down', disabled: i === cfg.items.length - 1, onclick: () => { [cfg.items[i + 1], cfg.items[i]] = [cfg.items[i], cfg.items[i + 1]]; save(true); } }, '↓'),
-      h('button', { class: 'ico', title: 'Remove', onclick: () => { cfg.items.splice(i, 1); save(true); } }, '✕'))),
+      h('button', { class: 'ico', title: 'Remove', onclick: () => { cfg.items.splice(i, 1); save(true); } }, '✕')); }),
     cfg.items.length ? null : h('div', { class: 'note' }, 'The wheel is empty.'),
     h('div', { class: 'adders' },
       h('button', { class: 'btn', disabled: cfg.items.length >= L.items, onclick: () => { cfg.items.push({ type: 'action', action: S.actions[0].id }); save(true); } }, '+ Quick action'),
@@ -236,12 +251,13 @@ function workspaceCard(w) {
   const add = (item) => { if (w.items.length >= L.shortcuts) return toast('A workspace holds up to ' + L.shortcuts); w.items.push(item); save(true); };
   card.append(
     h('div', { class: 'head' },
-      h('div', { class: 'pic', html: W.ICONS.workspace, style: 'width:30px;height:30px;display:flex;align-items:center;justify-content:center' }),
+      logoPic(w.logo, W.ICONS.workspace, (p) => { w.logo = p; save(true); }),
+      logoReset(w.logo, (p) => { w.logo = p; save(true); }),
       h('input', { class: 'txt', value: w.name, maxlength: 30, oninput: (e) => { w.name = e.target.value; save(false); } }),
       h('span', { class: 'kind' }, `${w.items.length} / ${L.shortcuts}`),
       h('button', { class: 'btn danger', onclick: () => { if (!confirm('Delete the workspace "' + w.name + '"?')) return; cfg.workspaces = cfg.workspaces.filter((x) => x !== w); cfg.items = cfg.items.filter((it) => !(it.type === 'workspace' && it.ws === w.id)); save(true); } }, 'Delete')),
     h('div', { class: 'list' }, w.items.map((it, i) => h('div', { class: 'item' },
-      h('div', { class: 'pic' }, iconOf(it)),
+      h('div', { class: 'pic click', title: 'Click to choose your own icon', onclick: async () => { const p = await window.rs.pickIcon(); if (p) { it.logo = p; save(true); } } }, iconOf(it)),
       h('input', { class: 'txt nm', value: it.name, maxlength: 60, oninput: (e) => { it.name = e.target.value; save(false); } }),
       h('span', { class: 'kind' }, it.kind === 'app' ? 'App' : it.kind === 'url' ? 'Link' : 'Folder'),
       h('button', { class: 'btn', title: 'Choose a picture as the icon' + (it.logo ? ' (a picture is set)' : ''), onclick: async () => { const p = await window.rs.pickIcon(); if (p) { it.logo = p; save(true); } } }, 'Icon'),

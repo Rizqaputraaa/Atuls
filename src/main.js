@@ -566,6 +566,24 @@ function pollMedia() {
 
 let permOk = true, asked = false, seenMove = false, lastHookAt = Date.now();
 
+// Windows: the name uiohook uses for a key of the low-level keyboard hook (virtual key code + extended flag), or ''
+const WIN_KEYS = (() => {
+  const t = {};
+  for (let i = 0; i < 26; i++) t[0x41 + i] = String.fromCharCode(65 + i);
+  for (let i = 0; i < 10; i++) { t[0x30 + i] = String(i); t[0x60 + i] = 'Numpad' + i; }
+  for (let i = 1; i <= 24; i++) t[0x6F + i] = 'F' + i;
+  Object.assign(t, { 0x08: 'Backspace', 0x09: 'Tab', 0x0D: 'Enter', 0x14: 'CapsLock', 0x1B: 'Escape', 0x20: 'Space', 0x21: 'PageUp', 0x22: 'PageDown', 0x23: 'End', 0x24: 'Home',
+    0x25: 'ArrowLeft', 0x26: 'ArrowUp', 0x27: 'ArrowRight', 0x28: 'ArrowDown', 0x2C: 'PrintScreen', 0x2D: 'Insert', 0x2E: 'Delete', 0x5B: 'Meta', 0x5C: 'MetaRight',
+    0x6A: 'NumpadMultiply', 0x6B: 'NumpadAdd', 0x6D: 'NumpadSubtract', 0x6E: 'NumpadDecimal', 0x6F: 'NumpadDivide', 0x90: 'NumLock', 0x91: 'ScrollLock',
+    0xA0: 'Shift', 0xA1: 'ShiftRight', 0xA2: 'Ctrl', 0xA3: 'CtrlRight', 0xA4: 'Alt', 0xA5: 'AltRight', 0x10: 'Shift', 0x11: 'Ctrl', 0x12: 'Alt',
+    0xBA: 'Semicolon', 0xBB: 'Equal', 0xBC: 'Comma', 0xBD: 'Minus', 0xBE: 'Period', 0xBF: 'Slash', 0xC0: 'Backquote', 0xDB: 'BracketLeft', 0xDC: 'Backslash', 0xDD: 'BracketRight', 0xDE: 'Quote' });
+  return t;
+})();
+function winKeyName(k) {
+  if (k.vkCode === 0x0D && (k.flags & 1)) return 'NumpadEnter';
+  return WIN_KEYS[k.vkCode] || '';
+}
+
 // Put the input hooks back when the system dropped them (after sleep or lock, or when one timed out).
 // NEVER stop/start the global input hook (uiohook) while input may be flowing: stop() waits for the hook thread, which can be
 // waiting for this thread, and the whole process deadlocks (it then cannot even be killed: it stays as a one-thread zombie that
@@ -680,16 +698,32 @@ function startInput() {
   try {
     // swallow keystrokes locally while controlling the other computer (must be installed before uiohook)
     const swallowedKeys = new Set(); // swallow a release only if its press was swallowed too, or the key stays stuck down
+    // A swallowed key must not depend on uiohook to be forwarded: uiohook only hears it while it sits above this hook, and after the
+    // hooks are put back (unlock, sleep, a silent drop) this hook is on top, so clicks and typing never reached the other computer.
+    // So this hook forwards what it swallows itself; when uiohook reports the same key too, the second report is dropped.
+    const fwdKeys = new Set(), keySeen = new Map();
+    const dupKey = (id, src) => { // true when the other source already reported this very key event a moment ago
+      const now = Date.now(), p = keySeen.get(id);
+      if (p && p.src !== src && now - p.t < 250) { keySeen.delete(id); return true; }
+      keySeen.set(id, { src, t: now });
+      return false;
+    };
+    const fwdKey = (k, down) => {
+      const name = winKeyName(k);
+      if (!name || dupKey(name + (down ? 'd' : 'u'), 'hook')) return;
+      link.lastHookKey = Date.now(); link.onLocalKey(down, name);
+    };
+    link.dupKey = dupKey;
     const blockKeys = (k) => {
       lastHookAt = Date.now();
       if (k.flags & 0x10) return false; // injected by us
-      if (k.flags & 0x80) return swallowedKeys.delete(k.vkCode);
+      if (k.flags & 0x80) { const was = swallowedKeys.delete(k.vkCode); if (fwdKeys.delete(k.vkCode)) fwdKey(k, false); return was; }
       if (link.lockedOut()) { // master mode: this keyboard is switched off, except Ctrl / Alt / Shift on their own and any key while Ctrl+Alt are held (the take-over shortcut)
         const vk = k.vkCode;
         if ((vk >= 0xA0 && vk <= 0xA5) || (vk >= 0x10 && vk <= 0x12) || native.winCtrlAlt()) return false;
         swallowedKeys.add(vk); return true;
       }
-      if (link.state === 'controlling' || link.recorder) { swallowedKeys.add(k.vkCode); return true; } // recording a shortcut: the keys belong to the settings window
+      if (link.state === 'controlling' || link.recorder) { swallowedKeys.add(k.vkCode); fwdKeys.add(k.vkCode); fwdKey(k, true); return true; } // recording a shortcut: the keys belong to the settings window
       return false;
     };
     if (native.installKeyBlocker(blockKeys)) console.log('[island] key blocker installed');
@@ -700,7 +734,7 @@ function startInput() {
       down: (b, n) => { if (link.state === 'controlling' || Date.now() < hookLogUntil || (hookDownLog = (hookDownLog || 0) + 1) <= 12) lifecycle.line('mouse button ' + b + ' down seen by the hook, link state ' + link.state); closeIfPinnedOutside(); link.onLocalButton(true, b, n); },
       up: (b) => { if (link.state === 'controlling' || Date.now() < hookLogUntil || (hookUpLog = (hookUpLog || 0) + 1) <= 12) lifecycle.line('mouse button ' + b + ' up seen by the hook, link state ' + link.state); link.onLocalButton(false, b); },
       wheel: (d, r) => link.onLocalWheel(d, r),
-      key: (name, down) => { link.lastHookKey = Date.now(); if (link.state === 'controlled' && (link.hookKeyLog = (link.hookKeyLog || 0) + 1) <= 8) lifecycle.line('hook saw key ' + name + (down ? ' down' : ' up') + ' while controlled'); link.onLocalKey(down, name); },
+      key: (name, down) => { if (process.platform === 'win32' && link.dupKey && link.dupKey(name + (down ? 'd' : 'u'), 'uio')) return; link.lastHookKey = Date.now(); if (link.state === 'controlled' && (link.hookKeyLog = (link.hookKeyLog || 0) + 1) <= 8) lifecycle.line('hook saw key ' + name + (down ? ' down' : ' up') + ' while controlled'); link.onLocalKey(down, name); },
     });
     permOk = true;
     watchAccess();
@@ -1447,6 +1481,7 @@ app.whenReady().then(() => {
       else if (c === 'ovclick') { if (overlay && !overlay.isDestroyed()) { for (const t of ['mouseDown', 'mouseUp']) overlay.webContents.sendInputEvent({ type: t, x: 200, y: 200, button: 'left', clickCount: 1 }); lifecycle.line('test: synthetic click sent to the overlay (link state ' + link.state + ')'); } else lifecycle.line('test: no overlay'); }
       else if (c === 'assoctest') { hookLogUntil = Date.now() + 16000; lifecycle.line('test: mouse disconnected from the cursor for 14 s: ' + native.macAssociate(false)); setTimeout(() => lifecycle.line('test: mouse connected again: ' + native.macAssociate(true)), 14000); }
       else if (c === 'radialtest') radial.open('test');
+      else if (c === 'reinstallhooks') reinstallInput('test'); // development test: our hooks go above uiohook, like after an unlock
       else if (c.startsWith('settingsjs:')) radial.evalSettings(c.slice(11)).then((r) => lifecycle.line('test: settings says ' + JSON.stringify(r))).catch((e) => lifecycle.line('test: settings failed ' + e.message));
       else if (c === 'wins') lifecycle.line('test: windows ' + BrowserWindow.getAllWindows().map((w) => { const b = w.getBounds(); return (w.webContents.getURL().split('/').pop() || '?') + ' ' + (w.isVisible() ? 'visible' : 'hidden') + (w.isFocused() ? ' focused' : '') + (w.isMinimized() ? ' minimized' : '') + ' ' + b.x + ',' + b.y + ' ' + b.width + 'x' + b.height; }).join(' | '));
       else if (c.startsWith('linkicon:')) { const t0 = Date.now(); radial.itemIcon({ kind: 'url', url: c.slice(9) }).then((u) => lifecycle.line('test: link icon ' + c.slice(9) + ' -> ' + (u ? u.length + ' chars' : 'none') + ' in ' + (Date.now() - t0) + ' ms')); }

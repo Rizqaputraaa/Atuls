@@ -55,11 +55,11 @@ function centerEl(isBack) {
 
 function itemEl(it, pos, i) {
   const el = document.createElement('div');
-  el.className = 'item' + (it.kind === 'app' || it.kind === 'url' || it.kind === 'folder' ? ' sq' : '') + (it.kind === 'action' && it.action === 'none' ? ' empty' : '');
+  el.className = 'item' + (it.kind === 'app' || it.kind === 'url' || it.kind === 'folder' || ((it.kind === 'action' || it.kind === 'workspace') && it.icon) ? ' sq' : '') + (it.kind === 'action' && it.action === 'none' ? ' empty' : '');
   el.style.left = `calc(50% + ${pos.x}px)`; el.style.top = `calc(50% + ${pos.y}px)`; el.style.animationDelay = (40 + i * 35) + 'ms';
-  if (it.kind === 'action') el.innerHTML = W.ICONS[it.action] || W.ICONS.none;
+  if (it.icon) el.innerHTML = '<img alt="" src="' + it.icon + '">';
+  else if (it.kind === 'action') el.innerHTML = W.ICONS[it.action] || W.ICONS.none;
   else if (it.kind === 'workspace') el.innerHTML = W.ICONS.workspace;
-  else if (it.icon) el.innerHTML = '<img alt="" src="' + it.icon + '">';
   else el.innerHTML = it.kind === 'url' ? W.ICONS.url : it.kind === 'folder' ? W.ICONS.folder : '<b>' + (it.label || '?').slice(0, 1).toUpperCase() + '</b>';
   // a workspace opens as soon as the pointer rests on it (no click needed); clicking it still works
   el.onmouseenter = () => {

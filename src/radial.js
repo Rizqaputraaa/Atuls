@@ -53,11 +53,11 @@ function sanitize(c) {
       else if (kind === 'folder' && str(it.path, 500)) items.push({ kind, path: str(it.path, 500), name: str(it.name, 60) || path.basename(it.path), logo: str(it.logo, 500) });
       else if (kind === 'url' && /^(https?:\/\/|mailto:)/i.test(str(it.url, 800))) items.push({ kind, url: str(it.url, 800), name: str(it.name, 60) || str(it.url, 800).replace(/^https?:\/\/(www\.)?/i, '').split('/')[0], logo: str(it.logo, 500) });
     }
-    out.workspaces.push({ id, name: str(w && w.name, 30) || 'Workspace', items });
+    out.workspaces.push({ id, name: str(w && w.name, 30) || 'Workspace', logo: str(w && w.logo, 500), items });
   }
   out.items = [];
   for (const it of (Array.isArray(c.items) ? c.items : []).slice(0, LIMIT.items)) {
-    if (it && it.type === 'action' && ACTIONS[it.action]) out.items.push({ type: 'action', action: it.action });
+    if (it && it.type === 'action' && ACTIONS[it.action]) out.items.push({ type: 'action', action: it.action, logo: str(it.logo, 500) });
     else if (it && it.type === 'workspace' && seen.has(it.ws)) out.items.push({ type: 'workspace', ws: it.ws });
   }
   return out;
@@ -149,8 +149,14 @@ async function linkIcon(u, logo) {
   if (url) { c[host] = url; favSave(); } // (a failed try is not remembered: the network may have been away)
   return url;
 }
+// a picture the user chose for a wheel entry or a workspace
+async function logoUrl(p) {
+  if (!p) return '';
+  try { const img = nativeImage.createFromPath(p); return img.isEmpty() ? '' : img.resize({ width: 64 }).toDataURL(); } catch { return ''; }
+}
 async function itemIcon(it) {
   if (!it) return '';
+  if (it.kind === 'logo') return logoUrl(it.logo);
   if (it.kind === 'url') return linkIcon(it.url, it.logo);
   if (it.kind === 'app' || it.kind === 'folder') return appIcon(it.path, it.logo);
   return '';
@@ -250,9 +256,12 @@ async function payload(cfg) {
     }
     workspaces[w.id] = { name: w.name, items };
   }
-  const items = cfg.items.map((it) => it.type === 'action'
-    ? { kind: 'action', action: it.action, label: ACTIONS[it.action] }
-    : { kind: 'workspace', ws: it.ws, label: (workspaces[it.ws] || {}).name || 'Workspace', count: ((workspaces[it.ws] || {}).items || []).length });
+  const wsLogo = {};
+  for (const w of cfg.workspaces) wsLogo[w.id] = await logoUrl(w.logo);
+  const items = [];
+  for (const it of cfg.items) items.push(it.type === 'action'
+    ? { kind: 'action', action: it.action, label: ACTIONS[it.action], icon: await logoUrl(it.logo) }
+    : { kind: 'workspace', ws: it.ws, label: (workspaces[it.ws] || {}).name || 'Workspace', count: ((workspaces[it.ws] || {}).items || []).length, icon: wsLogo[it.ws] || '' });
   return { cfg: { appearance: cfg.appearance, mode: cfg.mode, zone: cfg.zone }, logo, items, workspaces, colors: D.store.get('colors', []).slice(0, 5) };
 }
 
