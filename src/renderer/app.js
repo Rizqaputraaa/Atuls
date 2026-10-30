@@ -447,7 +447,7 @@ api.onTransfer((t) => {
 });
 
 // the panel is as tall as its page needs (the tray page is short, the others are full)
-function wantH() { const p = PAGES[pageIdx]; return p === 'tray' ? Math.max(190, Math.min(410, 90 + $('#tray-wrap').offsetHeight)) : p === 'link' ? Math.max(250, Math.min(450, 92 + $('#link-wrap').offsetHeight)) : 410; }
+function wantH() { const p = PAGES[pageIdx]; if (p === 'chat') return Math.max(240, Math.min(410, 92 + $('#wa-wrap').offsetHeight)); if (p === 'water') return Math.max(300, Math.min(410, 92 + $('#water-wrap').offsetHeight)); return p === 'tray' ? Math.max(190, Math.min(410, 90 + $('#tray-wrap').offsetHeight)) : p === 'link' ? Math.max(250, Math.min(450, 92 + $('#link-wrap').offsetHeight)) : 410; }
 let holdH = 0, holdUntil = 0; // while dust is flying the panel keeps its height
 function updateOpenH() {
   let h = wantH();
@@ -1131,7 +1131,7 @@ function agoOf(t) {
 }
 const waUnread = () => waState.items.filter((e) => e.at > waPageSeen && !e.mine).length;
 function renderWaBadge() { if (!waState) return; const d = document.querySelector('#dots i[data-p="' + PAGES.indexOf('chat') + '"]'); if (d) d.classList.toggle('badge', waUnread() > 0 && PAGES[pageIdx] !== 'chat'); }
-const waApply = (r) => { waState = r; renderWa(); renderWaBadge(); };
+const waApply = (r) => { waState = r; renderWa(); renderWaBadge(); updateOpenH(); };
 
 // the connection card: connect (QR), connecting, connected
 function renderWaConn() {
@@ -1256,7 +1256,7 @@ function renderWaterNext() {
 }
 function renderWater() {
   const w = water;
-  if (!w) return;
+  if (!w) return; setTimeout(updateOpenH, 0);
   $('#water-sw').classList.toggle('on', !!w.on);
   $('#water-sw').setAttribute('aria-checked', w.on ? 'true' : 'false');
   if (document.activeElement !== $('#water-every')) $('#water-every').value = w.every;

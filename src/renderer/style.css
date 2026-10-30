@@ -847,3 +847,6 @@ body.darwin.pr { justify-content: flex-start; } /* the pill stays where it is wh
 .cv-step.chg i { animation: ucpop .6s var(--ease); }
 @keyframes ucpop { 0% { transform: scaleY(1); } 35% { transform: scaleY(2.2); filter: brightness(1.6); } 100% { transform: scaleY(1); } }
 .cv-ask.leave { opacity: 0; transform: translateY(6px); transition: opacity .5s ease .4s, transform .5s ease .4s; }
+
+/* the tab arrows stay at the top, under the bar with the profile and settings, whatever the height of the panel */
+.nav { top: 62px; transform: none; height: 52px; }
