@@ -850,3 +850,4 @@ body.darwin.pr { justify-content: flex-start; } /* the pill stays where it is wh
 
 /* the tab arrows stay at the top, under the bar with the profile and settings, whatever the height of the panel */
 .nav { top: 62px; transform: none; height: 52px; }
+.cv-step[hidden] { display: none; }

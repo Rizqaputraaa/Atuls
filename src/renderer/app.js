@@ -1358,22 +1358,32 @@ function renderClaude() {
   setMarq($('#cv-project'), cur ? cur.project : 'Claude Code');
   const elapsed = cur ? (cur.endedAt || (cur.running ? Date.now() : cur.lastAt)) - cur.startedAt : 0;
   $('#cv-time').textContent = fmtDur(elapsed);
-  const idx = !cur ? -1 : cur.endedAt || (cur.ask && cur.ask.done) ? 4 : { start: 0, read: 0, edit: 1, test: 2 }[cur.stage === 'ask' ? (cur.steps.test ? 'test' : cur.steps.edit ? 'edit' : 'read') : cur.stage] || 0;
+  // only the steps Claude really took (a job may not edit or test); Done always ends the row
+  const finishedJob = !!cur && (!!cur.endedAt || !!(cur.ask && cur.ask.done));
+  const did = (cur && cur.did) || {};
+  const keys = ['read', 'edit', 'test'].filter((k) => did[k]);
+  if (cur && !finishedJob && !keys.length) keys.push('read');
+  keys.push('done');
+  const curKey = !cur ? '' : finishedJob ? 'done' : cur.stage === 'ask' || cur.stage === 'start' ? (keys.length > 1 ? keys[keys.length - 2] : 'read') : cur.stage;
+  const idx = !cur ? -1 : Math.max(0, keys.indexOf(curKey));
   const WORK = ['Looking around', 'Making changes', 'Running tests'];
-  $('#cv-status').textContent = !cur ? 'No job yet' : cur.ask ? (cur.ask.done ? 'Done · waiting for your answer' : 'Waiting for your answer') : cur.endedAt ? 'Done · every step' : (cur.stale ? 'Waiting · ' : '') + WORK[Math.min(idx, 2)] + ' · step ' + (idx + 1) + ' of 4';
+  const WORKK = { read: 'Looking around', edit: 'Making changes', test: 'Running tests' };
+  $('#cv-status').textContent = !cur ? 'No job yet' : cur.ask ? (cur.ask.done ? 'Done · waiting for your answer' : 'Waiting for your answer') : cur.endedAt ? 'Done' : (cur.stale ? 'Waiting · ' : '') + WORKK[curKey] + ' · step ' + (idx + 1) + ' of ' + keys.length;
   renderAct(cur);
   const fin = !!cur && !!cur.endedAt && !cur.ask;
   $('#cv-done').hidden = !fin;
   $('#cv-text').textContent = cur && cur.text ? cur.text : cur ? 'Working on it...' : 'Ask Claude Code for something and it shows up here.';
   renderAsk(cur);
   if (fin) $('#cv-text').hidden = true;
-  const mark = (cur ? cur.stage + (cur.ask ? 'a' : '') + idx : 'none');
+  const mark = (cur ? cur.stage + (cur.ask ? 'a' : '') + keys.join() + idx : 'none');
   if (mark !== lastMark) { if (lastMark) { retrigger($('#cv-status')); retrigger($('.cv-right')); retrigger($('#cv-time')); } lastMark = mark; }
-  document.querySelectorAll('#cv-steps .cv-step').forEach((el, i) => { // the steps before the one Claude is at are full, that one half (while it works), the rest empty
-    if (el.classList.contains('on') !== (idx > i) || el.classList.contains('now') !== (idx === i && !!cur && !cur.endedAt)) retrigger(el);
-    el.classList.toggle('on', idx > i);
-    el.classList.toggle('now', idx === i && !!cur && !cur.endedAt);
-    el.classList.toggle('last', idx === 4 && i === 3);
+  document.querySelectorAll('#cv-steps .cv-step').forEach((el) => { // the steps before the one Claude is at are full, that one half (while it works), the rest empty
+    const pos = keys.indexOf(el.dataset.k), shown = pos >= 0, on = shown && !!cur && (idx > pos || finishedJob), now = shown && idx === pos && !!cur && !finishedJob;
+    if (el.hidden === shown || el.classList.contains('on') !== on || el.classList.contains('now') !== now) retrigger(el);
+    el.hidden = !shown;
+    el.classList.toggle('on', on);
+    el.classList.toggle('now', now);
+    el.classList.toggle('last', el.dataset.k === 'done' && finishedJob);
   });
   renderPlan(plan);
   renderGlow();

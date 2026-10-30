@@ -167,7 +167,7 @@ class ClaudeJobs {
         project: projectOf(from.cwd) || from.project || from.title || 'Claude Code',
         startedAt: cur.start, endedAt: cur.end, lastAt: cur.last, running, stale: !cur.end && !running,
         steps: { read: cur.read || finished, edit: cur.edit || finished, test: cur.test || finished, done: finished },
-        stage: cur.ask ? 'ask' : stage, text: cur.text, act: cur.end || cur.ask ? null : cur.act, ask: cur.ask ? { text: cur.ask.text, options: cur.ask.options, done: cur.ask.kind === 'box' } : null,
+        did: { read: cur.read, edit: cur.edit, test: cur.test }, stage: cur.ask ? 'ask' : stage, text: cur.text, act: cur.end || cur.ask ? null : cur.act, ask: cur.ask ? { text: cur.ask.text, options: cur.ask.options, done: cur.ask.kind === 'box' } : null,
       },
     };
   }
