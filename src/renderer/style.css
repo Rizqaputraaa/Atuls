@@ -684,3 +684,166 @@ body.darwin.pr { justify-content: flex-start; } /* the pill stays where it is wh
 #toast-actions button.main { background: #0a84ff; }
 #toast-actions button.main:hover { background: #3d9bff; }
 #toast.alarm #toast-icon { animation: ctlpulse 1.2s ease-in-out infinite; }
+
+/* ---- Claude and CPU page ---- */
+#tab-usage { overflow: hidden; }
+#uc { position: relative; height: 100%; }
+.uc-view { position: absolute; inset: 0; padding: 6px 22px 8px; overflow: hidden; }
+.uc-view[hidden] { display: none; }
+.uc-cards { display: flex; gap: 14px; align-items: stretch; padding-top: 14px; }
+.uc-card { flex: 1; min-width: 0; border: 0; border-radius: 26px; padding: 16px 18px; color: #fff; text-align: left; cursor: pointer; display: flex; flex-direction: column; justify-content: space-between; position: relative; overflow: hidden; transition: transform .25s var(--ease), filter .2s; }
+.uc-card:hover { transform: translateY(-2px) scale(1.01); filter: brightness(1.08); }
+.uc-card.claude { background: linear-gradient(165deg, #d0703d 0%, #8a4220 48%, #2b1710 100%); }
+.uc-card.cpu { background: linear-gradient(165deg, #3b82e0 0%, #1f4a8f 48%, #0d1a30 100%); }
+.uc-top { display: flex; justify-content: space-between; align-items: flex-start; }
+.uc-tag { display: inline-flex; align-items: center; gap: 7px; font-size: 13px; font-weight: 600; }
+.uc-tag svg { width: 18px; height: 18px; fill: none; stroke: #fff; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.uc-ringbox { position: relative; width: 46px; height: 46px; }
+.uc-ringbox svg { width: 100%; height: 100%; transform: rotate(-90deg); }
+.uc-ringbox circle { fill: none; stroke-width: 4.5; }
+.uc-ringbox .rt { stroke: #ffffff30; }
+.uc-ringbox .rb { stroke: #fff; stroke-linecap: round; stroke-dasharray: 113.1; stroke-dashoffset: 113.1; transition: stroke-dashoffset .6s var(--ease); }
+.uc-ringbox em { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-style: normal; font-size: 11px; font-weight: 700; }
+.uc-bottom { display: flex; flex-direction: column; gap: 2px; }
+.uc-big { font-size: 40px; line-height: 1.05; font-weight: 800; }
+.uc-bottom small { font-size: 12.5px; color: #ffffffcc; }
+.uc-live { font-size: 11px; opacity: .9; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.uc-head { display: flex; align-items: center; gap: 12px; margin: 2px 0 8px; }
+.uc-head b { flex: 1; font-size: 14px; }
+.uc-back { background: #1c1c1e; border: 0; border-radius: 10px; color: var(--fg); padding: 4px 10px; font-size: 12px; cursor: pointer; }
+.uc-back:hover { background: #2c2c2e; }
+.cv-body { display: flex; gap: 22px; align-items: center; min-height: 150px; }
+.cv-left { flex: 0 0 210px; }
+.cv-proj { display: inline-flex; align-items: center; gap: 8px; background: #1c1c1e; border-radius: 12px; padding: 5px 10px 5px 6px; margin-bottom: 8px; }
+.cv-proj > span { width: 22px; height: 22px; border-radius: 7px; background: #d0703d; display: flex; align-items: center; justify-content: center; }
+.cv-proj svg { width: 14px; height: 14px; fill: none; stroke: #fff; stroke-width: 2.2; stroke-linecap: round; }
+.cv-proj b { font-size: 13px; max-width: 150px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cv-time { font-size: 52px; font-weight: 800; line-height: 1.05; letter-spacing: -.01em; }
+.cv-status { color: var(--dim); font-size: 12.5px; margin-top: 2px; }
+.cv-right { flex: 1; min-width: 0; }
+.cv-bubble { background: #1c1c1e; border: 1px solid #2c2c2e; border-radius: 20px; padding: 14px 16px; font-size: 13.5px; line-height: 1.45; text-align: left; max-height: 128px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 5; -webkit-box-orient: vertical; word-break: break-word; }
+.cv-steps { display: flex; gap: 10px; margin-top: 12px; }
+.cv-step { flex: 1; display: flex; flex-direction: column; gap: 6px; font-size: 12px; color: var(--dim); }
+.cv-step i { display: block; height: 4px; border-radius: 2px; background: #3a3a3c; transition: background .3s; }
+.cv-step.on i { background: #fff; }
+.cv-step.now span, .cv-step.on:last-child span { color: #fff; font-weight: 700; }
+#uc-limits-view .plan { max-width: 420px; }
+.pf { display: flex; gap: 14px; height: calc(100% - 38px); }
+.pf-list { flex: 0 0 190px; display: flex; flex-direction: column; gap: 4px; overflow-y: auto; }
+.pf-item { display: flex; gap: 8px; align-items: center; border: 0; background: transparent; color: var(--fg); border-radius: 10px; padding: 6px 8px; cursor: pointer; text-align: left; }
+.pf-item:hover { background: #17171a; }
+.pf-item.on { background: #232326; }
+.pf-item canvas { flex: none; width: 52px; height: 30px; border: 1px solid #2c2c2e; border-radius: 4px; background: #121214; }
+.pf-t { display: flex; flex-direction: column; min-width: 0; }
+.pf-t b { font-size: 13px; font-weight: 600; }
+.pf-t small { color: var(--dim); font-size: 10.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pf-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; text-align: left; }
+.pf-title { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+.pf-title b { font-size: 22px; font-weight: 500; }
+.pf-title span { color: var(--dim); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pf-gh { position: relative; border: 1px solid #2c2c2e; border-radius: 4px; background: #121214; }
+.pf-gh canvas { display: block; width: 100%; height: 104px; }
+.pf-gh small { position: absolute; right: 4px; top: 2px; color: var(--dim); font-size: 9.5px; }
+.pf-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px 12px; }
+.pf-stats div { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.pf-stats small { color: var(--dim); font-size: 10.5px; }
+.pf-stats b { font-size: 15px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pf-stats .pf-wide { grid-column: 1 / -1; }
+.pf-stats .pf-wide b { font-size: 12px; }
+
+/* views glide, cards answer the press */
+.uc-view { transition: opacity .38s var(--ease), transform .5s var(--ease), visibility 0s linear 0s; }
+.uc-view.off { opacity: 0; transform: translateY(12px) scale(.985); pointer-events: none; visibility: hidden; transition: opacity .22s ease, transform .3s ease, visibility 0s linear .3s; }
+#uc-home.off { transform: scale(.955); }
+.uc-card.press { animation: ucpress .45s var(--ease); }
+@keyframes ucpress { 0% { transform: scale(1); } 35% { transform: scale(.965); } 100% { transform: scale(1.02); opacity: .9; } }
+#uc-claude-view:not(.off) .cv-left > *, #uc-claude-view:not(.off) .cv-right > *, #uc-claude-view:not(.off) .cv-steps { animation: ucin .55s var(--ease) both; }
+#uc-claude-view:not(.off) .cv-right > * { animation-delay: .08s; }
+#uc-claude-view:not(.off) .cv-steps { animation-delay: .14s; }
+#uc-perf-view:not(.off) .pf-item, #uc-perf-view:not(.off) .pf-main { animation: ucin .5s var(--ease) both; }
+#uc-perf-view:not(.off) .pf-main { animation-delay: .1s; }
+@keyframes ucin { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+.cv-step i { position: relative; overflow: hidden; }
+.cv-step i::after { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 0; background: #fff; border-radius: 2px; transition: width .6s var(--ease); }
+.cv-step.on i { background: #fff; }
+.cv-step.now i::after { width: 50%; animation: ucwork 1.6s ease-in-out infinite alternate; }
+@keyframes ucwork { from { width: 35%; } to { width: 65%; } }
+.cv-step.now span { color: #fff; font-weight: 700; }
+.cv-step.last span { color: #fff; font-weight: 700; }
+.cv-act { background: #1c1c1e; border: 1px solid #2c2c2e; border-radius: 16px; overflow: hidden; text-align: left; }
+.cv-act[hidden] { display: none; }
+.cv-act-head { display: flex; align-items: center; gap: 8px; padding: 9px 12px; border-bottom: 1px solid #2c2c2e; font-size: 13px; }
+.cv-act-head b { flex: 1; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cv-act-head em { font-style: normal; color: var(--dim); font-size: 12px; }
+.cv-tag { background: #2c2c2e; border-radius: 5px; padding: 1px 5px; font-size: 10px; font-weight: 700; color: #9ec1ff; }
+.cv-act-body { padding: 4px 0; font-family: ui-monospace, Consolas, monospace; font-size: 11.5px; }
+.cv-line { display: flex; gap: 8px; padding: 2px 12px; white-space: nowrap; overflow: hidden; }
+.cv-line i { font-style: normal; color: #8e8e93; flex: none; width: 10px; }
+.cv-line span { overflow: hidden; text-overflow: ellipsis; }
+.cv-line.del { background: #3a1d1f; color: #ffb4b0; }
+.cv-line.add { background: #17301f; color: #a8f0b8; }
+.cv-cmd { color: #c7c7cc; }
+
+.wa-connect { flex-direction: column; align-items: flex-start; gap: 12px; padding: 18px; font-size: 13px; color: var(--dim); }
+
+/* ---- Claude and CPU page: cards that shrink to a row ---- */
+#uc-cards { position: absolute; left: 22px; right: 22px; top: 12px; height: calc(100% - 20px); display: flex; gap: 14px; padding: 0; transition: height .55s var(--ease); z-index: 2; }
+#uc.sel #uc-cards { height: 68px; }
+#uc-cards .uc-card { transition: padding .45s var(--ease), border-radius .45s var(--ease), opacity .3s, filter .2s, box-shadow .3s, transform .25s var(--ease); }
+#uc.sel .uc-card { padding: 9px 14px; border-radius: 20px; opacity: .72; }
+#uc.sel .uc-card.cur { opacity: 1; box-shadow: 0 0 0 2px #ffffff66; }
+#uc.sel .uc-bottom { opacity: 0; max-height: 0; overflow: hidden; transition: opacity .2s, max-height .4s var(--ease); }
+.uc-bottom { max-height: 120px; transition: opacity .4s .12s, max-height .5s var(--ease); }
+#uc.sel .uc-ringbox { width: 40px; height: 40px; }
+.uc-ringbox { transition: width .45s var(--ease), height .45s var(--ease); }
+#uc-views { position: absolute; left: 22px; right: 22px; top: 88px; bottom: 0; }
+#uc-views .uc-view { padding: 0; }
+#uc-glow { position: absolute; left: -22px; right: -22px; bottom: -34px; height: 150px; background-color: var(--glow, transparent); -webkit-mask-image: radial-gradient(ellipse 62% 100% at 50% 100%, #000 0%, transparent 72%); mask-image: radial-gradient(ellipse 62% 100% at 50% 100%, #000 0%, transparent 72%); opacity: 0; transition: background-color .8s ease, opacity .6s ease; pointer-events: none; z-index: 0; }
+#uc-glow.on { opacity: .55; }
+#uc-glow.on.run { animation: ucglow 2.4s ease-in-out infinite alternate; }
+@keyframes ucglow { from { opacity: .35; } to { opacity: .7; } }
+.cv-bubble { max-height: 112px; overflow-y: auto; display: block; -webkit-line-clamp: unset; }
+.cv-proj b { display: block; width: max-content; max-width: 150px; flex: 0 0 auto; white-space: nowrap; overflow: hidden; text-overflow: clip; }
+.cv-proj b.marq { -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 14px), transparent); mask-image: linear-gradient(90deg, #000 calc(100% - 14px), transparent); }
+.cv-proj b.marq > span { display: inline-block; animation: marquee 8s ease-in-out infinite alternate; }
+.uc-limits { position: absolute; right: 0; bottom: 2px; }
+#uc-claude-view .cv-body { min-height: 120px; }
+#uc-claude-view .cv-time { font-size: 44px; }
+.pf { height: 100%; }
+
+/* ---- a question of Claude: its text, the answers to choose and a field to write one ---- */
+.cv-ask { display: flex; flex-direction: column; gap: 7px; margin-top: 8px; }
+.cv-ask-btns { display: flex; gap: 7px; flex-wrap: wrap; }
+.cv-ask-btn { background: #ffffff; color: #111; border: 0; border-radius: 14px; padding: 7px 14px; font-weight: 600; font-size: 12.5px; font-family: inherit; cursor: pointer; transition: transform .15s var(--ease), background .2s; }
+.cv-ask-btn:nth-child(n+2) { background: #2c2c2e; color: #fff; }
+.cv-ask-btn:hover { transform: translateY(-1px); background: #e8e8ea; }
+.cv-ask-btn:nth-child(n+2):hover { background: #3a3a3c; }
+.cv-ask-form { display: flex; gap: 6px; }
+.cv-ask-form input { flex: 1; min-width: 0; background: #1c1c1e; border: 1px solid #ffffff1f; border-radius: 14px; padding: 7px 12px; color: #fff; font-size: 12.5px; font-family: inherit; outline: none; }
+.cv-ask-form input:focus { border-color: #ffffff66; }
+.cv-ask-form button { width: 32px; border: 0; border-radius: 14px; background: #2c2c2e; color: #fff; cursor: pointer; font-size: 15px; }
+.cv-ask-form button:hover { background: #3a3a3c; }
+.cv-bubble { transition: max-height .3s var(--ease); }
+#cv-ask:not([hidden]) ~ .cv-bubble, .cv-right:has(#cv-ask:not([hidden])) .cv-bubble { max-height: calc(100% - 82px); }
+/* the step bar sits low (over the glow) so the answer of Claude has room */
+#uc-claude-view .cv-steps { position: absolute; left: 0; right: 0; bottom: 28px; margin-top: 0; }
+#uc-claude-view .cv-body { position: absolute; left: 0; right: 0; top: 0; bottom: 78px; min-height: 0; align-items: flex-start; }
+#uc-claude-view .cv-time { margin-top: 2px; }
+#uc-claude-view .cv-right { height: 100%; display: flex; flex-direction: column; min-height: 0; }
+#uc-claude-view .cv-bubble { max-height: 100%; }
+.cv-right:has(#cv-ask:not([hidden])) .cv-bubble { max-height: calc(100% - 82px); min-height: 40px; }
+
+/* ---- the question: its text and the buttons only; the finished job: the word Done; every change moves ---- */
+.cv-ask { margin-top: 10px; }
+.cv-ask-btn { flex: 1; min-width: 0; padding: 10px 14px; font-size: 13.5px; border-radius: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cv-ask-btn.busy { opacity: .6; }
+.cv-ask-btn.sent { background: #30d158; color: #04210d; }
+.cv-ask-btn.fail { background: #ff453a; color: #fff; }
+.cv-right:has(#cv-ask:not([hidden])) .cv-bubble { max-height: calc(100% - 62px); min-height: 60px; }
+.cv-done { font-size: 54px; font-weight: 800; letter-spacing: -1px; color: #30d158; padding-top: 18px; animation: ucdone .6s var(--ease) both; }
+@keyframes ucdone { from { opacity: 0; transform: scale(.85) translateY(10px); } to { opacity: 1; transform: none; } }
+.chg { animation: ucchg .55s var(--ease) both; }
+@keyframes ucchg { from { opacity: 0; transform: translateY(8px) scale(.98); } to { opacity: 1; transform: none; } }
+.cv-step.chg i { animation: ucpop .6s var(--ease); }
+@keyframes ucpop { 0% { transform: scaleY(1); } 35% { transform: scaleY(2.2); filter: brightness(1.6); } 100% { transform: scaleY(1); } }
+.cv-ask.leave { opacity: 0; transform: translateY(6px); transition: opacity .5s ease .4s, transform .5s ease .4s; }

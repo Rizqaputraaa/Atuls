@@ -13,8 +13,9 @@ let mixerOpen = false, mixTimer = null, mixDrag = 0, mixSyncAt = 0, mixSig = '';
 const MACOS = api.platform === 'darwin';
 var replyMs = 5000;
 var alarmCtx = null, alarmSound = null; // an alarm banner: it stays and its sound comes back until one of its buttons is pressed
+var toastTall = false; // the banner has a second row (a reply field or buttons)
 var replyToastOn = false, replyCtx = null; // a message banner with a field to answer in (it takes the pointer and the keyboard, so hovering must not open the panel meanwhile)
-const toastSize = () => [Math.max(SIZES.toast[0], SIZES.compact[0] + 32), SIZES.toast[1] + (replyToastOn ? 48 : 0)]; // the banner is never narrower than the pill above it
+const toastSize = () => [Math.max(SIZES.toast[0], SIZES.compact[0] + 32), SIZES.toast[1] + (toastTall ? 48 : 0)]; // the banner is never narrower than the pill above it
 const SIZES = { compact: MACOS ? [464, 34] : [234, 34], open: [624, 410], toast: MACOS ? [520, 100] : [380, 100] };
 // the pill is as tall as the menu bar (notched MacBooks) and leaves the notch free
 api.metrics().then((m) => {
@@ -98,12 +99,14 @@ function setPillText(t, kara) {
   box.appendChild(inner);
   if (kara) applyKara();
   requestAnimationFrame(() => {
-    const over = inner.scrollWidth - box.clientWidth;
-    if (over > 2) {
-      inner.style.setProperty('--shift', -over + 'px');
-      inner.style.animationDuration = (over / 28 + 3.5).toFixed(1) + 's';
-      box.classList.add('marquee');
-    }
+    const pill = $('#pill'), avail = box.clientWidth, tw = inner.getBoundingClientRect().width;
+    inner.style.fontSize = '';
+    if (tw <= avail + 1) return;
+    const fixed = MACOS && !pillRight, pw0 = pillPw; // (the Mac pill next to the notch does not grow)
+    const finalPw = fixed ? pw0 : Math.min(PILL_MAX, Math.ceil(pw0 + (tw - avail) + 8));
+    if (finalPw > pw0) setPillWidth(finalPw);
+    const room = avail + (finalPw - pw0);
+    if (tw > room) { const base = parseFloat(getComputedStyle(inner).fontSize) || 13; inner.style.fontSize = Math.max(8, base * Math.max(0.55, room / tw)) + 'px'; }
   });
 }
 let curTitle = '', lyricNow = '';
@@ -113,7 +116,7 @@ const measure = document.createElement('canvas').getContext('2d');
 function refreshPill() {
   const t = lyricNow || (playing && curTitle ? curTitle : clock());
   setPillText(t, !!lyricNow);
-  fitPill(lyricNow ? t : '');
+  fitPill(lyricNow || (playing && curTitle) ? t : ''); // (a lyric line or the title is as wide as the pill needs; only the clock is small)
 }
 const topClock = () => { $('#top-clock').textContent = new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); };
 (function clockTick() { topClock(); if (!playing) refreshPill(); setTimeout(clockTick, 60000 - (Date.now() % 60000) + 50); })(); // on the minute: the clock has no seconds
@@ -137,7 +140,7 @@ function showPage(i, instant) {
   island.dataset.page = i;
   if (PAGES[i] === 'chat' && typeof waMarkSeen === 'function') waMarkSeen(); // the messages of the page have been seen after a moment
   if (typeof renderWaBadge === 'function') renderWaBadge();
-  if (PAGES[i] === 'usage' && typeof usageRefresh === 'function') usageRefresh();
+  if (PAGES[i] === 'usage' && typeof ucRefresh === 'function') ucRefresh();
   updateOpenH();
   document.querySelectorAll('#dots i').forEach((d) => d.classList.toggle('on', Number(d.dataset.p) === i));
   $('#nav-prev').classList.toggle('off', i === 0);
@@ -615,7 +618,7 @@ function endToast() {
   if (typeof stopRing === 'function') stopRing();
   if (!toastOn) return;
   toastOn = false;
-  replyToastOn = false; replyCtx = null; alarmStop();
+  replyToastOn = false; replyCtx = null; toastTall = false; alarmStop();
   island.classList.remove('toast', 'treply');
   $('#toast').classList.remove('reply', 'alarm'); $('#toast-reply').hidden = true; $('#toast-actions').hidden = true;
   if (!isOpen) { api.islandSize(...SIZES.compact); api.windowSize(...SIZES.compact); }
@@ -649,7 +652,7 @@ const TUNES = {
   received: [[1175, 0, 0.1], [880, 0.1, 0.1], [659, 0.2, 0.22]],
   connected: [[523, 0, 0.09], [659, 0.09, 0.09], [784, 0.18, 0.09], [1047, 0.27, 0.26]],
   err: [[330, 0, 0.14, 'triangle'], [247, 0.17, 0.26, 'triangle']],
-  start: [[196, 0, 0.7, 'triangle'], [392, 0.02, 0.14], [523, 0.14, 0.14], [659, 0.26, 0.14], [784, 0.38, 0.16], [1047, 0.52, 0.6]],
+  start: [[73.4, 0, 0.34, 'sine', 1], [146.8, 0, 0.3, 'triangle', 0.6], [73.4, 0.38, 1.4, 'sine', 1], [146.8, 0.38, 1.3, 'triangle', 0.7], [220, 0.39, 1.2, 'sine', 0.5], [293.7, 0.4, 1.1, 'sine', 0.45], [440, 0.42, 1, 'sine', 0.35], [880, 0.55, 0.6, 'sine', 0.18]],
   shot: [[2400, 0, 0.03, 'square'], [1500, 0.035, 0.07, 'sine']],
   impact: [[95, 0, 0.14, 'sine'], [58, 0.015, 0.2, 'sine'], [1900, 0, 0.012, 'square']],
   chat: [[1047, 0, 0.07], [1397, 0.08, 0.12]],
@@ -663,11 +666,11 @@ function chime(kind, vol) {
     audioCtx = audioCtx || new AudioContext();
     if (audioCtx.state === 'suspended') audioCtx.resume();
     const t0 = audioCtx.currentTime + 0.02, peak = Math.pow(vol / 100, 1.3) * 0.5;
-    for (const [freq, at, len, type] of tune) {
+    for (const [freq, at, len, type, gn] of tune) {
       const o = audioCtx.createOscillator(), g = audioCtx.createGain();
       o.type = type || 'sine'; o.frequency.value = freq;
       g.gain.setValueAtTime(0.0001, t0 + at);
-      g.gain.exponentialRampToValueAtTime(Math.max(0.0002, peak), t0 + at + 0.012);
+      g.gain.exponentialRampToValueAtTime(Math.max(0.0002, peak * (gn || 1) * (tune.length > 6 ? 0.55 : 1)), t0 + at + 0.012); // (a chord of many notes is turned down so it does not distort)
       g.gain.exponentialRampToValueAtTime(0.0001, t0 + at + len + 0.06);
       o.connect(g); g.connect(audioCtx.destination);
       o.start(t0 + at); o.stop(t0 + at + len + 0.08);
@@ -681,7 +684,7 @@ api.onToast((t) => {
   if (alarmCtx && !t.alarm) return; // an alarm waiting for its answer is not pushed away by another banner
   if (t.kind !== 'progress') chime(soundKind(t), t.sound || 0);
   alarmStop();
-  if (t.alarm) { alarmCtx = t.alarm; alarmSound = setInterval(() => chime(soundKind(t), t.sound || 0), 8000); }
+  if (t.alarm) { alarmCtx = t.alarm; if (!t.alarm.soft) alarmSound = setInterval(() => chime(soundKind(t), t.sound || 0), 8000); }
   stopRing();
   $('#toast-icon').classList.remove('hold');
   const err = t.kind === 'err', prog = t.kind === 'progress';
@@ -690,10 +693,11 @@ api.onToast((t) => {
   $('#toast').classList.toggle('err', err);
   $('#toast').classList.toggle('prog', prog);
   $('#toast').classList.toggle('water', t.icon === 'water');
-  replyToastOn = !!(t.reply || t.alarm); replyCtx = t.reply || null;
-  $('#toast').classList.toggle('reply', replyToastOn); island.classList.toggle('treply', replyToastOn); $('#toast').classList.toggle('alarm', !!t.alarm);
+  replyToastOn = !!(t.reply || t.alarm); replyCtx = t.reply || null; // (it takes the pointer)
+  toastTall = !!(t.reply || (t.alarm && t.alarm.actions && t.alarm.actions.length));
+  $('#toast').classList.toggle('reply', toastTall); island.classList.toggle('treply', toastTall); $('#toast').classList.toggle('alarm', !!t.alarm);
   $('#toast-reply').hidden = !t.reply;
-  const acts = $('#toast-actions'); acts.textContent = ''; acts.hidden = !t.alarm;
+  const acts = $('#toast-actions'); acts.textContent = ''; acts.hidden = !(t.alarm && t.alarm.actions && t.alarm.actions.length);
   if (t.alarm) for (const a of t.alarm.actions) { const b = mk('button', a.primary ? 'main' : '', a.label); b.onclick = () => { const ctx = alarmCtx; endToast(); if (ctx) api.alarmAct(ctx.id, a.key); }; acts.appendChild(b); }
   if (t.reply) { const inp = $('#toast-reply-in'); inp.value = ''; inp.placeholder = 'Reply to ' + String(t.title || '').split(' (+')[0] + '...'; }
   $('#toast').classList.toggle('deco-icon', t.icon === 'sent' || t.icon === 'received' || t.icon === 'water'); // (not called 'ico': that class is the round icon button style)
@@ -725,7 +729,7 @@ api.onToast((t) => {
   box.classList.remove('play'); void box.offsetWidth; box.classList.add('play');
   clearTimeout(toastTimer);
   if (t.reply) replyMs = Math.max(2000, (Number(t.secs) || 5) * 1000);
-  toastTimer = setTimeout(endToast, t.alarm ? 180000 : replyToastOn ? replyMs : prog ? ((t.ready || 3) + (t.hold || 2)) * 1000 + 6000 : 4500); // a step stays until the next message replaces it
+  toastTimer = setTimeout(endToast, t.alarm ? (t.alarm.soft ? Math.max(5, Number(t.alarm.secs) || 20) * 1000 : 180000) : replyToastOn ? replyMs : prog ? ((t.ready || 3) + (t.hold || 2)) * 1000 + 6000 : 4500); // a step stays until the next message replaces it
 });
 
 // calendar: yesterday, today, tomorrow and the day after, with a coloured dot for every activity (Settings > Calendar connects the calendars)
@@ -893,7 +897,8 @@ function setLyric(t) {
   lyricNow = t;
   refreshPill();
 }
-const lyrPos = () => lyr.pos + (playing ? (Date.now() - lyr.at) / 1000 : 0) + 0.2; // a little ahead: the pill takes a moment to show it
+var lyricOffset = -0.3; // Settings > General > Lyrics timing: seconds, positive = the lines come earlier
+const lyrPos = () => lyr.pos + (playing ? (Date.now() - lyr.at) / 1000 : 0) + lyricOffset;
 // keep the sung line in the middle of the lyrics area
 function lyrScroll(i) {
   const el = lyr.els[Math.max(0, i)];
@@ -960,22 +965,27 @@ function applyKara() {
   karaEl = el;
 }
 // the pill is as wide as the lyric line it shows (a plain pill otherwise)
-function fitPill(text) {
-  if (MACOS && !pillRight) return;
-  let pw = 210;
-  if (text) {
-    measure.font = getComputedStyle($('#pill-text')).font;
-    pw = Math.max(210, Math.min(620, Math.ceil(measure.measureText(text).width) + 112 + 8));
-  }
+var pillOverhead = 120; // what the pill needs besides the text (the dot, the icons, the padding): measured from the page
+const PILL_MAX = 620;
+function setPillWidth(pw) {
   if (pw === pillPw) return;
   const grow = pw > pillPw;
   pillPw = pw;
   const ear = 12;
   SIZES.compact[0] = pw + 2 * ear;
   clearTimeout(pillTimer);
-  const apply = () => { if (isOpen) return; api.islandSize(...SIZES.compact); api.windowSize(...(toastOn ? toastSize() : SIZES.compact)); };
+  const apply = () => { if (isOpen) return; api.islandSize(...(replyToastOn ? toastSize() : SIZES.compact)); api.windowSize(...(toastOn ? toastSize() : SIZES.compact)); };
   if (grow) { apply(); island.style.setProperty('--pw', pw + 'px'); }
   else { island.style.setProperty('--pw', pw + 'px'); pillTimer = setTimeout(apply, 480); }
+}
+function fitPill(text) {
+  if (MACOS && !pillRight) return;
+  let pw = 210;
+  if (text) {
+    measure.font = getComputedStyle($('#pill-text')).font;
+    pw = Math.max(210, Math.min(PILL_MAX, Math.ceil(measure.measureText(text).width) + pillOverhead + 6));
+  }
+  setPillWidth(pw);
 }
 
 // top bar: your picture (or the logo), the link mark, the volume mixer
@@ -992,6 +1002,7 @@ const applyLook = (l) => {
   if (l && l.pillPos) setPillPos(l.pillPos === 'right');
   if (l && l.openMode) openMode = l.openMode;
   if (l && l.navMode) navMode = l.navMode;
+  if (l && Number.isFinite(l.lyricOffset)) lyricOffset = l.lyricOffset;
   document.documentElement.style.setProperty('--deco', (l && l.accent) || '#0a84ff');
   const img = $('#avatar-img');
   img.classList.toggle('logo', !(l && l.profile));
@@ -1105,7 +1116,7 @@ $('#lk-gaze-sw').onclick = () => { ui('link: look to switch ' + (gazeNow.enabled
 // ---- WhatsApp page: the messages of the linked WhatsApp (or, without one, the ones WhatsApp shows as notifications on the Windows PC), grouped
 // by chat. They are read by the main process (wa-connect.js / notify.js) and also reach the linked computer. Rows with a green dot are new since
 // the page was last looked at. With a connection a chat can be answered right here.
-var waState = { on: false, canRead: false, items: [], conn: { state: 'off' }, canReply: false }, waSeenAt = Date.now(), waSeenTimer = null;
+var waState = { on: false, canRead: false, items: [], conn: { state: 'off' }, canReply: false }, waSeenAt = Date.now(), waPageSeen = Date.now(), waSeenTimer = null, waRowSeen = new Map(); // waSeenAt: when this started (what came before is not new); waRowSeen: when a chat was pressed; waPageSeen: for the dot of the tab
 var waOpenChats = new Set(), waDrafts = new Map();
 const mk = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; };
 const initialsOf = (s) => { const w = String(s || '?').split(' ').filter(Boolean); return (Array.from(w[0] || '?')[0] + (w.length > 1 ? Array.from(w[1])[0] : '')).toUpperCase(); };
@@ -1118,7 +1129,7 @@ function agoOf(t) {
   const d = new Date(t);
   return d.toDateString() === new Date().toDateString() ? clockOf(t) : d.toLocaleDateString([], { day: 'numeric', month: 'short' });
 }
-const waUnread = () => waState.items.filter((e) => e.at > waSeenAt && !e.mine).length;
+const waUnread = () => waState.items.filter((e) => e.at > waPageSeen && !e.mine).length;
 function renderWaBadge() { if (!waState) return; const d = document.querySelector('#dots i[data-p="' + PAGES.indexOf('chat') + '"]'); if (d) d.classList.toggle('badge', waUnread() > 0 && PAGES[pageIdx] !== 'chat'); }
 const waApply = (r) => { waState = r; renderWa(); renderWaBadge(); };
 
@@ -1126,72 +1137,57 @@ const waApply = (r) => { waState = r; renderWa(); renderWaBadge(); };
 function renderWaConn() {
   const s = waState, box = $('#wa-conn'), c = s.conn || { state: 'off' };
   box.textContent = '';
-  box.hidden = !s.on;
-  if (!s.on) return;
+  box.hidden = false;
   const btn = (label, fn, cls) => { const b = mk('button', cls || 'wa-btn', label); b.onclick = fn; return b; };
   if (c.state === 'open') {
     const line = mk('div', 'wa-line');
-    line.append(mk('span', '', 'Connected' + (c.name ? ' as ' + c.name : '') + ' · you can reply here'), btn('Disconnect', () => { ui('whatsapp: disconnect'); api.waDisconnect().then(waApply); }, 'wa-linkbtn'));
+    line.append(mk('span', '', 'Connected' + (c.name ? ' as ' + c.name : '')), btn('Disconnect', () => { ui('whatsapp: disconnect'); api.waDisconnect().then(waApply); }, 'wa-linkbtn'));
     box.appendChild(line);
   } else if (c.state === 'qr') {
     const card = mk('div', 'wa-card wa-qr');
     const img = mk('img'); img.src = c.qr; img.alt = 'QR code';
     const side = mk('div', 'wa-qr-text');
-    side.append(mk('b', '', 'Scan with your phone'), mk('span', '', 'WhatsApp › Settings › Linked devices › Link a device, then point the camera at this code.'), btn('Cancel', () => api.waCancel().then(waApply), 'wa-linkbtn'));
+    side.append(mk('b', '', 'Scan with your phone'), mk('span', '', 'WhatsApp \u203a Settings \u203a Linked devices \u203a Link a device, then point the camera at this code.'), btn('Cancel', () => api.waCancel().then(waApply), 'wa-linkbtn'));
     card.append(img, side);
     box.appendChild(card);
   } else if (c.state === 'connecting') {
     const line = mk('div', 'wa-line');
     line.append(mk('span', '', 'Connecting to WhatsApp...'), btn('Cancel', () => api.waCancel().then(waApply), 'wa-linkbtn'));
     box.appendChild(line);
+  } else if (s.canReply) {
+    const line = mk('div', 'wa-line');
+    line.append(mk('span', '', 'The linked computer is connected'));
+    box.appendChild(line);
   } else {
-    const card = mk('div', 'wa-card');
-    const side = mk('div', 'wa-qr-text');
-    side.append(mk('b', '', s.canReply ? 'The linked computer is connected' : 'Reply from here (optional)'),
-      mk('span', '', s.canReply ? 'Replies from here are sent through it.' : 'Messages already show here from the WhatsApp Desktop notifications, with nothing to connect. Only to REPLY from the island does WhatsApp need a second linked device: scan one QR code (WhatsApp › Settings › Linked devices). It uses an unofficial feature of WhatsApp; you can unlink any time.'));
-    if (!s.canReply) side.appendChild(btn('Connect', () => { ui('whatsapp: connect'); api.waConnect().then(waApply); }));
-    card.appendChild(side);
+    const card = mk('div', 'wa-card wa-connect');
+    card.append(mk('span', '', 'Scan a QR code with your phone to see your WhatsApp messages here and answer them.'), btn('Connect', () => { ui('whatsapp: connect'); api.waConnect().then(waApply); }));
     box.appendChild(card);
   }
 }
 
 function renderWa() {
   const s = waState, list = $('#wa-list'), note = $('#wa-note');
-  const linked = typeof linkInfo !== 'undefined' && !!(linkInfo && linkInfo.connected);
-  const connected = !!(s.conn && s.conn.state === 'open');
-  $('#wa-sw').classList.toggle('on', !!s.on);
-  $('#wa-sw').setAttribute('aria-checked', s.on ? 'true' : 'false');
-  $('#wa-clear').hidden = !s.on || !s.items.length;
-  $('#wa-sub').textContent = s.on && s.items.length ? s.items.length + (s.items.length === 1 ? ' message' : ' messages') : '';
-  $('#wa-names').hidden = !(s.on && s.canRead && !connected && !(s.conn && s.conn.state !== 'off')); // names are only needed when WhatsApp is not connected
-  if (document.activeElement !== $('#wa-names-in')) $('#wa-names-in').value = (s.names || []).join(', ');
+  const connected = !!(s.conn && s.conn.state === 'open') || !!s.canReply;
+  $('#wa-clear').hidden = !connected || !s.items.length;
+  $('#wa-sub').textContent = connected && s.items.length ? s.items.length + (s.items.length === 1 ? ' message' : ' messages') : '';
   renderWaConn();
   // keep what the person is typing across a redraw
   const act = document.activeElement, focusChat = act && act.dataset && act.dataset.chat, caret = focusChat ? act.selectionStart : 0;
   list.textContent = '';
   note.textContent = '';
   note.hidden = false;
-  if (!s.on) {
-    note.appendChild(mk('div', '', s.canRead
-      ? 'See the WhatsApp messages you get on this computer here, and answer them from the island once WhatsApp is connected.'
-      : linked ? 'Turn this on to see the WhatsApp messages the linked computer receives.'
-        : 'Turn this on to see WhatsApp messages here. A linked computer shows them too.'));
-    const b = mk('button', '', 'Turn on'); b.onclick = () => { ui('whatsapp: turned on'); api.waSet(true).then(waApply); };
-    note.appendChild(b);
-    return;
-  }
-  if (!s.items.length) {
-    note.textContent = connected || s.canRead || linked ? 'No messages yet. New WhatsApp messages show up here as they arrive.' : 'Connect WhatsApp above, or link a Windows PC with WhatsApp Desktop, to see messages here.';
-    return;
-  }
+  if (!connected) { note.hidden = true; return; }
+  if (!s.items.length) { note.textContent = 'Nothing is waiting for an answer.'; return; }
   note.hidden = true;
   const by = new Map();
-  for (const e of s.items) { if (!by.has(e.chat)) by.set(e.chat, []); by.get(e.chat).push(e); }
+  for (const e of s.items) { if (e.mine) continue; if (!by.has(e.chat)) by.set(e.chat, []); by.get(e.chat).push(e); }
   const chats = [...by.values()].sort((a, b) => b[b.length - 1].at - a[a.length - 1].at);
   for (const arr of chats) {
     const last = arr[arr.length - 1], theirs = arr.filter((e) => !e.mine), head = theirs.length ? theirs[theirs.length - 1] : last;
-    const row = mk('div', 'wa-row' + (arr.some((e) => e.at > waSeenAt && !e.mine) ? ' new' : '') + (waOpenChats.has(last.chat) ? ' open' : ''));
-    const av = mk('div', 'wa-av', initialsOf(head.title)); av.style.background = 'hsl(' + hueOf(last.chat) + ',42%,36%)';
+    const row = mk('div', 'wa-row' + (arr.some((e) => e.at > (waRowSeen.get(last.chat) || waSeenAt)) ? ' new' : '') + (waOpenChats.has(last.chat) ? ' open' : ''));
+    const pic = (s.pics || {})[last.chat];
+    const av = mk('div', 'wa-av', pic ? '' : initialsOf(head.title));
+    if (pic) { av.style.backgroundImage = 'url(' + pic + ')'; av.style.backgroundSize = 'cover'; av.style.backgroundPosition = 'center'; } else av.style.background = 'hsl(' + hueOf(last.chat) + ',42%,36%)';
     const body = mk('div', 'wa-body');
     const top = mk('div', 'wa-top'); top.appendChild(mk('b', '', head.title)); top.appendChild(mk('time', '', agoOf(last.at)));
     const msg = mk('div', 'wa-msg');
@@ -1227,23 +1223,21 @@ function renderWa() {
     body.appendChild(bar);
     row.append(av, body);
     
-    row.onclick = () => { row.classList.toggle('open'); if (row.classList.contains('open')) waOpenChats.add(last.chat); else waOpenChats.delete(last.chat); };
+    row.onclick = () => { waRowSeen.set(last.chat, Date.now()); row.classList.remove('new'); renderWaBadge(); row.classList.toggle('open'); if (row.classList.contains('open')) waOpenChats.add(last.chat); else waOpenChats.delete(last.chat); };
     list.appendChild(row);
     if (focusChat === last.chat) { const i = row.querySelector('input'); if (i) { i.focus(); try { i.setSelectionRange(caret, caret); } catch { /* not a text field */ } } }
   }
 }
 function waMarkSeen() {
   clearTimeout(waSeenTimer);
-  waSeenTimer = setTimeout(() => { if (PAGES[pageIdx] === 'chat' && isOpen) { waSeenAt = Date.now(); renderWaBadge(); } }, 2500); // the green dots stay a moment so they can be seen
+  waSeenTimer = setTimeout(() => { if (PAGES[pageIdx] === 'chat' && isOpen) { waPageSeen = Date.now(); renderWaBadge(); } }, 2500); // the green dots stay a moment so they can be seen
 }
 api.onWa((s) => {
   const had = waState.items.length;
   waApply(s);
   if (s.items.length > had && isOpen && PAGES[pageIdx] === 'chat') waMarkSeen();
 });
-api.waGet().then((s) => { waSeenAt = Date.now(); waApply(s); });
-$('#wa-sw').onclick = () => { ui('whatsapp: switch ' + (waState.on ? 'off' : 'on')); api.waSet(!waState.on).then(waApply); };
-$('#wa-names-in').onchange = (e) => { ui('whatsapp: tag names changed'); api.waNames(e.target.value).then(waApply); };
+api.waGet().then((s) => { waSeenAt = waPageSeen = Date.now(); waApply(s); });
 $('#wa-clear').onclick = () => { ui('whatsapp: list cleared'); api.waClear().then(waApply); };
 setInterval(() => { if (isOpen && PAGES[pageIdx] === 'chat' && waState.on && !(document.activeElement && document.activeElement.dataset && document.activeElement.dataset.chat)) renderWa(); }, 30000); // the times ("5 min") move on
 
@@ -1279,26 +1273,207 @@ $('#water-sw').onclick = () => { if (!water) return; ui('water: reminders ' + (w
 $('#water-every').onchange = (e) => { const v = Number(e.target.value); if (v >= 5) api.waterSet({ every: v }).then(setWater); };
 setInterval(renderWaterNext, 15000);
 
-// ---- Usage page: memory of this computer and the AI tokens (Claude Code) used today. Asked for only while the page is in view.
-var usageBusy = false;
-const fmtTok = (n) => (n >= 1e7 ? Math.round(n / 1e6) + 'M' : n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e3 ? Math.round(n / 1e3) + 'k' : String(n));
-const fmtMem = (mb) => (mb >= 1024 ? (mb / 1024).toFixed(1) + ' GB' : Math.round(mb) + ' MB');
-function renderUsage(u) {
-  const r = u.ram, pct = Math.round((r.used / r.total) * 100);
-  $('#u-ram-used').textContent = (r.used / 1073741824).toFixed(1) + ' GB';
-  $('#u-ram-of').textContent = 'of ' + (r.total / 1073741824).toFixed(1) + ' GB · ' + pct + '%';
-  const bar = $('#u-ram-bar'); bar.style.width = pct + '%'; bar.style.background = pct >= 85 ? '#ff453a' : pct >= 70 ? '#ff9f0a' : '#30d158';
-  const top = $('#u-top'); top.textContent = '';
-  const max = Math.max(1, ...r.top.map((t) => t.mb));
-  for (const t of r.top) {
-    const row = mk('div', 'u-row'); const bg = mk('i'); bg.style.width = Math.max(4, (t.mb / max) * 100) + '%';
-    row.append(bg, mk('span', '', t.name), mk('em', '', fmtMem(t.mb)));
-    top.appendChild(row);
-  }
-  $('#u-app').textContent = 'A-tuls itself uses ' + fmtMem(r.app);
-  renderPlan(u.plan);
+// ---- Claude and CPU page: two cards. Claude Code opens what it is doing (project, time, steps, its last answer) and the limits of the plan;
+// the CPU opens the performance view (CPU, memory, disk, network, graphics with a minute of history, like the Windows Task Manager).
+var ucView = 'home', ucTick = 0, ucBusy = false, ucClaude = null, ucPerf = null, pfSel = 'cpu';
+const RING18 = 113.1; // 2 * pi * 18
+const fmtDur = (ms) => { const t = Math.max(0, Math.floor(ms / 1000)), h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), s = t % 60; return h ? h + ':' + String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0') : m + ':' + String(s).padStart(2, '0'); };
+const fmtGB = (b) => (b / 1073741824).toFixed(1) + ' GB';
+const fmtMB = (b) => Math.round(b / 1048576) + ' MB';
+const fmtBits = (bytesPerSec) => { const b = bytesPerSec * 8; return b >= 1e6 ? (b / 1e6).toFixed(1) + ' Mbps' : Math.round(b / 1e3) + ' Kbps'; };
+const fmtUp = (s) => { const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60); return d + ':' + String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0') + ':' + String(Math.floor(s % 60)).padStart(2, '0'); };
+
+const GLOW = { start: '#3b82f6', read: '#3b82f6', edit: '#f59e0b', test: '#a855f7', done: '#30d158', ask: '#ec4899' }; // the colour under the island for every step: blue, amber, purple, green
+function renderGlow() {
+  const g = $('#uc-glow'), cur = ucClaude && ucClaude.jobs && ucClaude.jobs.current;
+  g.classList.toggle('on', !!cur && (ucView === 'claude' || ucView === 'limits'));
+  g.classList.toggle('run', !!(cur && cur.running));
+  if (cur) g.style.setProperty('--glow', GLOW[cur.stage] || GLOW.start);
 }
-// "Resets at 11:00 PM" (today) or "Resets Wed 9:00 AM"
+// the two cards are big on their own; with one chosen they shrink to a row on top (name and ring stay) and its content shows below
+function ucShow(v) {
+  ucView = v;
+  $('#uc').classList.toggle('sel', v !== 'home');
+  $('#uc-claude').classList.toggle('cur', v === 'claude' || v === 'limits');
+  $('#uc-cpu').classList.toggle('cur', v === 'perf');
+  for (const id of ['claude', 'limits', 'perf']) $('#uc-' + id + '-view').classList.toggle('off', id !== v); // (they fade and slide: see .uc-view in the style)
+  ucTick = 0;
+  ucRefresh();
+  renderGlow();
+  updateOpenH();
+}
+$('#uc-claude').onclick = () => { ui('usage: Claude Code ' + (ucView === 'claude' || ucView === 'limits' ? 'closed' : 'opened')); ucShow(ucView === 'claude' || ucView === 'limits' ? 'home' : 'claude'); };
+$('#uc-cpu').onclick = () => { ui('usage: CPU ' + (ucView === 'perf' ? 'closed' : 'opened')); ucShow(ucView === 'perf' ? 'home' : 'perf'); };
+$('#uc-limits-back').onclick = () => ucShow('claude');
+// a long name moves to and fro (like a long line in the pill); a short one stands still
+function setMarq(el, text) {
+  if (el.dataset.t === text) return;
+  el.dataset.t = text; el.textContent = ''; el.classList.remove('marq');
+  const sp = mk('span', '', text); el.appendChild(sp);
+  requestAnimationFrame(() => { const over = sp.scrollWidth - el.clientWidth; if (over > 2) { sp.style.setProperty('--shift', -over + 'px'); sp.style.animationDuration = (over / 28 + 3.5).toFixed(1) + 's'; el.classList.add('marq'); } });
+}
+$('#uc-limits-btn').onclick = () => ucShow('limits');
+
+function ring(id, pct) { const c = $(id); if (c) c.style.strokeDashoffset = String(RING18 * (1 - Math.max(0, Math.min(100, pct)) / 100)); }
+const STAGES = { start: 'Starting', read: 'Reading files', edit: 'Editing', test: 'Running tests', done: 'Done' };
+let askKey = '', askSent = 0, lastMark = '', askDone = ''; // askDone: the question that was answered (it stays hidden until Claude moves on)
+function retrigger(el) { if (!el) return; el.classList.remove('chg'); void el.offsetWidth; el.classList.add('chg'); } // plays the change animation again
+// Claude asks something with answers to choose from: the question shows here with its buttons, and a field to write an answer; it goes to Claude as a message
+function renderAsk(cur) {
+  const ask = cur && cur.ask, box = $('#cv-ask');
+  if (!ask) { askKey = ''; askDone = ''; box.hidden = true; return; }
+  if (JSON.stringify(ask) === askDone) { if (!box.hidden && !box.classList.contains('leave')) { box.classList.add('leave'); setTimeout(() => { box.hidden = true; box.classList.remove('leave'); $('#cv-text').textContent = 'Answer sent. Claude is working on it...'; }, 900); } return; }
+  box.hidden = false;
+  $('#cv-text').textContent = ask.text;
+  const key = JSON.stringify(ask);
+  if (key === askKey) return;
+  askKey = key;
+  const btns = $('#cv-ask-btns'); btns.textContent = '';
+  for (const o of ask.options) { const b = mk('button', 'cv-ask-btn', o); b.type = 'button'; b.onclick = () => sendAnswer(o, b); btns.appendChild(b); }
+}
+function sendAnswer(t, btn) {
+  t = String(t || '').trim();
+  if (!t || Date.now() - askSent < 1500) return;
+  askSent = Date.now(); ui('claude: answer from the island');
+  const old = btn ? btn.textContent : '', key = askKey;
+  if (btn) { btn.classList.add('busy'); btn.textContent = 'Sending...'; }
+  api.claudeAnswer(t).then((ok) => { if (!btn) return; btn.classList.remove('busy'); btn.classList.add(ok ? 'sent' : 'fail'); btn.textContent = ok ? 'Sent' : 'Could not reach Claude'; if (ok) askDone = key; setTimeout(() => { btn.classList.remove('sent', 'fail'); btn.textContent = old; }, 2500); });
+}
+
+// the card of Claude Code, and the view behind it
+function renderClaude() {
+  const d = ucClaude;
+  if (!d) return;
+  const j = d.jobs, cur = j && j.current, plan = d.plan;
+  const sessionPct = plan && plan.ok && plan.session ? plan.session.pct : null;
+  const steps = cur ? ['read', 'edit', 'test', 'done'].filter((k) => cur.steps[k]).length : 0;
+  const pct = sessionPct !== null ? sessionPct : Math.round((steps / 4) * 100);
+  ring('#uc-claude-ring', pct);
+  $('#uc-claude-pct').textContent = pct + '%';
+  $('#uc-claude-pct').title = sessionPct !== null ? '5-hour limit used' : 'steps of the last job';
+  $('#uc-jobs').textContent = j ? j.jobsToday : 0;
+  $('#uc-jobs-sub').textContent = j && j.jobsToday === 1 ? 'job today' : 'jobs today';
+  $('#uc-claude-live').textContent = cur && cur.running ? '● ' + cur.project + ' · ' + fmtDur(Date.now() - cur.startedAt) : !j || !j.found ? 'No Claude Code files here' : '';
+  // the view
+  setMarq($('#cv-project'), cur ? cur.project : 'Claude Code');
+  const elapsed = cur ? (cur.endedAt || (cur.running ? Date.now() : cur.lastAt)) - cur.startedAt : 0;
+  $('#cv-time').textContent = fmtDur(elapsed);
+  const idx = !cur ? -1 : cur.endedAt || (cur.ask && cur.ask.done) ? 4 : { start: 0, read: 0, edit: 1, test: 2 }[cur.stage === 'ask' ? (cur.steps.test ? 'test' : cur.steps.edit ? 'edit' : 'read') : cur.stage] || 0;
+  const WORK = ['Looking around', 'Making changes', 'Running tests'];
+  $('#cv-status').textContent = !cur ? 'No job yet' : cur.ask ? (cur.ask.done ? 'Done · waiting for your answer' : 'Waiting for your answer') : cur.endedAt ? 'Done · every step' : (cur.stale ? 'Waiting · ' : '') + WORK[Math.min(idx, 2)] + ' · step ' + (idx + 1) + ' of 4';
+  renderAct(cur);
+  const fin = !!cur && !!cur.endedAt && !cur.ask;
+  $('#cv-done').hidden = !fin;
+  $('#cv-text').textContent = cur && cur.text ? cur.text : cur ? 'Working on it...' : 'Ask Claude Code for something and it shows up here.';
+  renderAsk(cur);
+  if (fin) $('#cv-text').hidden = true;
+  const mark = (cur ? cur.stage + (cur.ask ? 'a' : '') + idx : 'none');
+  if (mark !== lastMark) { if (lastMark) { retrigger($('#cv-status')); retrigger($('.cv-right')); retrigger($('#cv-time')); } lastMark = mark; }
+  document.querySelectorAll('#cv-steps .cv-step').forEach((el, i) => { // the steps before the one Claude is at are full, that one half (while it works), the rest empty
+    if (el.classList.contains('on') !== (idx > i) || el.classList.contains('now') !== (idx === i && !!cur && !cur.endedAt)) retrigger(el);
+    el.classList.toggle('on', idx > i);
+    el.classList.toggle('now', idx === i && !!cur && !cur.endedAt);
+    el.classList.toggle('last', idx === 4 && i === 3);
+  });
+  renderPlan(plan);
+  renderGlow();
+}
+// the card on the right while Claude works: the file and the lines it changes, the file it reads, the command it runs; else its last answer
+function renderAct(cur) {
+  const box = $('#cv-act'), a = cur && !cur.endedAt && !cur.ask && cur.act;
+  box.hidden = !a;
+  $('#cv-text').hidden = !!a;
+  if (!a) return;
+  const key = JSON.stringify(a);
+  if (box.dataset.k === key) return;
+  box.dataset.k = key; box.textContent = '';
+  const head = mk('div', 'cv-act-head');
+  const tag = mk('span', 'cv-tag', a.kind === 'test' || a.kind === 'run' ? 'SH' : 'TS');
+  const name = mk('b', '', a.file || (a.kind === 'test' ? 'tests' : 'command'));
+  head.append(tag, name, mk('em', '', { edit: 'being edited', write: 'being written', read: 'being read', test: 'running', run: 'running' }[a.kind] || ''));
+  box.appendChild(head);
+  const body = mk('div', 'cv-act-body');
+  const line = (cls, sign, text, n) => { const d = mk('div', 'cv-line ' + cls); d.append(mk('i', '', String(n)), mk('i', '', sign), mk('span', '', text)); body.appendChild(d); };
+  if (a.kind === 'edit' || a.kind === 'write') { (a.del || []).forEach((t, i) => line('del', '\u2212', t, i + 1)); (a.add || []).forEach((t, i) => line('add', '+', t, i + 1)); }
+  else if (a.cmd) { const d = mk('div', 'cv-line'); d.append(mk('span', 'cv-cmd', a.cmd)); body.appendChild(d); }
+  if (body.children.length) box.appendChild(body);
+}
+function ucTimerOnly() { // between two readings the clock of a running job goes on by itself
+  const cur = ucClaude && ucClaude.jobs && ucClaude.jobs.current;
+  if (cur && cur.running) { const t = fmtDur(Date.now() - cur.startedAt); if (ucView === 'claude') $('#cv-time').textContent = t; if (ucView === 'home') $('#uc-claude-live').textContent = '● ' + cur.project + ' · ' + t; }
+}
+
+// graphs
+function drawGraph(cv, vals, max, color, fill = true) {
+  const w = cv.width, h = cv.height, g = cv.getContext('2d');
+  g.clearRect(0, 0, w, h);
+  g.strokeStyle = '#26262a'; g.lineWidth = 1;
+  for (let i = 1; i < 10; i++) { const x = Math.round((w * i) / 10) + 0.5; g.beginPath(); g.moveTo(x, 0); g.lineTo(x, h); g.stroke(); }
+  for (let i = 1; i < 5; i++) { const y = Math.round((h * i) / 5) + 0.5; g.beginPath(); g.moveTo(0, y); g.lineTo(w, y); g.stroke(); }
+  if (!vals.length) return;
+  const n = 60, step = w / (n - 1), off = n - vals.length;
+  g.beginPath();
+  vals.forEach((v, i) => { const x = (off + i) * step, y = h - 1 - (Math.min(v, max) / (max || 1)) * (h - 3); if (i) g.lineTo(x, y); else g.moveTo(x, y); });
+  g.strokeStyle = color; g.lineWidth = 1.6; g.stroke();
+  if (fill) { g.lineTo((off + vals.length - 1) * step, h); g.lineTo(off * step, h); g.closePath(); g.fillStyle = color + '33'; g.fill(); }
+}
+
+const PF_COLORS = { cpu: '#4ea1ff', mem: '#b57bff', disk: '#4cc38a', net: '#e8a14a', gpu: '#46c1c1' };
+function pfEntries(p) {
+  const out = [{ k: 'cpu', name: 'CPU', val: p.cpu.pct + '%' + (p.cpu.now ? '  ' + (p.cpu.now / 1000).toFixed(2) + ' GHz' : ''), hist: p.cpu.hist, max: 100 }];
+  out.push({ k: 'mem', name: 'Memory', val: (p.mem.used / 1073741824).toFixed(1) + '/' + (p.mem.total / 1073741824).toFixed(1) + ' GB (' + Math.round((p.mem.used / p.mem.total) * 100) + '%)', hist: p.mem.hist, max: 100 });
+  if (p.disk && p.disk.on) out.push({ k: 'disk', name: 'Disk', val: Math.round(p.disk.pct) + '%', hist: p.disk.hist, max: 100 });
+  if (p.net) out.push({ k: 'net', name: 'Network', val: 'S ' + fmtBits(p.net.sent) + '  R ' + fmtBits(p.net.recv), hist: p.net.hist, max: Math.max(125000, ...p.net.hist) });
+  if (p.gpu && p.gpu.on) out.push({ k: 'gpu', name: 'GPU', val: Math.round(p.gpu.pct) + '%', hist: p.gpu.hist, max: 100 });
+  return out;
+}
+function renderPerf() {
+  const p = ucPerf;
+  if (!p) return;
+  // the small card
+  ring('#uc-cpu-ring', p.cpu.pct);
+  $('#uc-cpu-pct').textContent = p.cpu.pct + '%';
+  $('#uc-cpu-big').textContent = p.cpu.pct + '%';
+  $('#uc-cpu-sub').textContent = (p.cpu.now ? (p.cpu.now / 1000).toFixed(2) : (p.cpu.speed / 1000).toFixed(2)) + ' GHz · RAM ' + Math.round((p.mem.used / p.mem.total) * 100) + '%';
+  if (ucView !== 'perf') return;
+  const entries = pfEntries(p);
+  if (!entries.find((e) => e.k === pfSel)) pfSel = 'cpu';
+  const list = $('#pf-list');
+  if (list.children.length !== entries.length) {
+    list.textContent = '';
+    for (const e of entries) {
+      const row = mk('button', 'pf-item'); row.dataset.k = e.k;
+      const cv = mk('canvas'); cv.width = 70; cv.height = 40;
+      const t = mk('div', 'pf-t'); t.append(mk('b', '', e.name), mk('small', '', ''));
+      row.append(cv, t);
+      row.onclick = () => { pfSel = e.k; renderPerf(); };
+      list.appendChild(row);
+    }
+  }
+  entries.forEach((e, i) => {
+    const row = list.children[i];
+    row.classList.toggle('on', e.k === pfSel);
+    row.querySelector('small').textContent = e.val;
+    drawGraph(row.querySelector('canvas'), e.hist, e.max, PF_COLORS[e.k], false);
+  });
+  const sel = entries.find((e) => e.k === pfSel);
+  $('#pf-name').textContent = sel.name;
+  $('#pf-sub').textContent = sel.k === 'cpu' ? p.cpu.model : sel.k === 'mem' ? fmtGB(p.mem.total) : sel.k === 'net' ? '' : '';
+  drawGraph($('#pf-graph'), sel.hist, sel.max, PF_COLORS[sel.k]);
+  $('#pf-max').textContent = sel.k === 'net' ? fmtBits(sel.max) : '100%';
+  const rows = [];
+  const add = (l, v) => rows.push([l, v]);
+  if (sel.k === 'cpu') { add('Utilization', p.cpu.pct + '%'); add('Speed', p.cpu.now ? (p.cpu.now / 1000).toFixed(2) + ' GHz' : '-'); add('Base speed', (p.cpu.speed / 1000).toFixed(2) + ' GHz'); add('Logical cores', String(p.cpu.cores)); if (p.mem.processes) { add('Processes', String(p.mem.processes)); add('Threads', String(p.mem.threads)); add('Handles', String(p.mem.handles)); } add('Up time', fmtUp(p.cpu.uptime)); }
+  else if (sel.k === 'mem') { add('In use', fmtGB(p.mem.used)); add('Available', fmtGB(p.mem.avail)); if (p.mem.committed) add('Committed', (p.mem.committed / 1073741824).toFixed(1) + '/' + (p.mem.commitLimit / 1073741824).toFixed(1) + ' GB'); if (p.mem.cached) add('Cached', fmtGB(p.mem.cached)); if (p.mem.paged) { add('Paged pool', fmtMB(p.mem.paged)); add('Non-paged pool', fmtMB(p.mem.nonpaged)); } }
+  else if (sel.k === 'disk') add('Active time', Math.round(p.disk.pct) + '%');
+  else if (sel.k === 'net') { add('Send', fmtBits(p.net.sent)); add('Receive', fmtBits(p.net.recv)); }
+  else if (sel.k === 'gpu') add('Utilization', Math.round(p.gpu.pct) + '%');
+  const box = $('#pf-stats'); box.textContent = '';
+  for (const [l, v] of rows) { const d = mk('div'); d.append(mk('small', '', l), mk('b', '', v)); box.appendChild(d); }
+  if (sel.k === 'mem' && p.top && p.top.length) { const d = mk('div', 'pf-wide'); d.append(mk('small', '', 'Most memory'), mk('b', '', p.top.slice(0, 4).map((t) => t.name + ' ' + (t.mb >= 1024 ? (t.mb / 1024).toFixed(1) + ' GB' : t.mb + ' MB')).join('  ·  '))); box.appendChild(d); }
+}
+
+// the limits of the plan, like in Claude itself
 function resetText(at) {
   if (!at) return '';
   if (at - Date.now() <= 60000) return 'Resets soon';
@@ -1306,28 +1481,27 @@ function resetText(at) {
   if (d.toDateString() === new Date().toDateString()) return 'Resets at ' + time;
   return 'Resets ' + d.toLocaleDateString([], { weekday: 'short' }) + ' ' + time;
 }
-// the bars of the Claude plan (session and weekly limit), only when the person switched them on
 function renderPlan(p) {
   const box = $('#u-plan'); box.textContent = '';
-  $('#u-plan-name').textContent = p && p.ok && p.plan ? ' \u00b7 ' + p.plan : '';
+  $('#u-plan-name').textContent = p && p.ok && p.plan ? ' · ' + p.plan : '';
   $('#u-seeall').hidden = !(p && p.enabled);
   $('#u-seeall').onclick = () => api.usageOpenWeb();
   const note = (text) => box.appendChild(mk('div', 'u-planhint', text));
   const link = (label, fn) => { const b = mk('button', 'wa-linkbtn', label); b.onclick = fn; return b; };
   const acts = (...els) => { const d = mk('div', 'u-planacts'); d.append(...els); box.appendChild(d); };
   if (!p || !p.enabled) {
-    note('See how much of your Claude plan is used: the session limit and the weekly limit, like in Claude itself.');
-    const b = mk('button', 'wa-btn', 'Show my limits'); b.onclick = () => api.usagePlan(true).then(usageRefresh); box.appendChild(b); return;
+    note('See how much of your Claude plan is used: the 5-hour limit and the weekly limit, like in Claude itself.');
+    const b = mk('button', 'wa-btn', 'Show my limits'); b.onclick = () => api.usagePlan(true).then(ucRefresh); box.appendChild(b); return;
   }
   if (!p.ok) {
     if (p.need === 'signin') {
       note('Sign in to Claude once to see the limits. You type your password in the Claude window itself; A-tuls only asks for the usage numbers.');
       const b = mk('button', 'wa-btn', 'Sign in to Claude'); b.onclick = () => { ui('usage: sign in to Claude'); api.usageClaudeLogin(); }; box.appendChild(b);
     } else note(p.error || 'The limits could not be read');
-    acts(link('Try again', usageRefresh), link('Hide', () => api.usagePlan(false).then(usageRefresh)));
+    acts(link('Try again', ucRefresh), link('Hide', () => api.usagePlan(false).then(ucRefresh)));
     return;
   }
-  for (const [label, b] of [['5-hour limit', p.session], ['Weekly \u00b7 all models', p.week], ['Weekly \u00b7 Opus', p.weekOpus]]) {
+  for (const [label, b] of [['5-hour limit', p.session], ['Weekly · all models', p.week], ['Weekly · Opus', p.weekOpus]]) {
     if (!b) continue;
     const row = mk('div', 'u-limit'), top = mk('div', 'u-limtop');
     top.append(mk('span', '', label), mk('em', '', resetText(b.resetsAt) + '   ' + b.pct + '%'));
@@ -1337,20 +1511,35 @@ function renderPlan(p) {
   if (p.credits) {
     const c = p.credits, row = mk('div', 'u-limit u-credit'), top = mk('div', 'u-limtop');
     top.append(mk('span', '', 'Cloud session credits'), mk('em', '', '$' + Math.round(c.left * 100) / 100 + ' of $' + Math.round(c.total * 100) / 100 + ' left'));
-    const bar = mk('div', 'u-bar thin'), fill = mk('i'); fill.style.width = Math.max(1, Math.min(100, ((c.total - c.left) / (c.total || 1)) * 100)) + '%'; // the bar shows what was used, like in Claude fill.style.background = '#4a86e8';
+    const bar = mk('div', 'u-bar thin'), fill = mk('i'); fill.style.width = Math.max(1, Math.min(100, ((c.total - c.left) / (c.total || 1)) * 100)) + '%'; fill.style.background = '#4a86e8';
     bar.appendChild(fill); row.append(top, bar);
     if (c.expiresAt) { const d = new Date(c.expiresAt); row.appendChild(mk('div', 'u-planhint', 'Expires ' + d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', timeZoneName: 'short' }) + ', ' + d.toLocaleDateString([], { month: 'long', day: 'numeric' }))); }
     box.appendChild(row);
   }
-  acts(link('Hide', () => api.usagePlan(false).then(usageRefresh)), ...(p.source === 'web' ? [link('Sign out', () => api.usageClaudeOut().then(usageRefresh))] : []));
+  acts(link('Hide', () => api.usagePlan(false).then(ucRefresh)), ...(p.source === 'web' ? [link('Sign out', () => api.usageClaudeOut().then(ucRefresh))] : []));
 }
-function usageRefresh() {
-  if (usageBusy) return;
-  usageBusy = true;
-  api.usageGet().then(renderUsage).catch(() => {}).finally(() => { usageBusy = false; });
-}
-setInterval(() => { if (isOpen && PAGES[pageIdx] === 'usage') usageRefresh(); }, 3000);
 
+// asked for only while the page is in view: the cards every second (the Claude files every third second), the lists once a second
+function ucRefresh() {
+  if (ucBusy) return;
+  ucBusy = true;
+  const jobs = ucView === 'claude' || ucView === 'limits' || ucTick % 3 === 0;
+  Promise.all([api.perfGet(ucView === 'perf'), jobs ? api.claudeGet() : null]).then(([p, c]) => {
+    if (p) ucPerf = p;
+    if (c) ucClaude = c;
+    renderPerf();
+    if (c) renderClaude();
+  }).catch(() => {}).finally(() => { ucBusy = false; });
+}
+setInterval(() => { if (!(isOpen && PAGES[pageIdx] === 'usage')) return; ucTick++; ucRefresh(); ucTimerOnly(); }, 1000);
+
+// a Claude banner (it needs a permission...): the pointer on it opens the Claude Code tab at once (a click does it in click mode)
+function openClaudeFromBanner() { ui('claude banner: the Claude Code tab opened'); endToast(); setOpen(true); showTab('usage'); ucShow('claude'); }
+$('#toast').addEventListener('mouseenter', () => { if (alarmCtx && alarmCtx.hover === 'claude' && openMode === 'hover') openClaudeFromBanner(); });
+$('#toast').addEventListener('click', () => { if (alarmCtx && alarmCtx.hover === 'claude') openClaudeFromBanner(); });
+// the pointer comes to the pill while a message banner hangs under it: the banner goes at once and the island opens (or, in click mode, a click does it)
+$('#pill').addEventListener('mouseenter', () => { if (replyToastOn && !alarmCtx && openMode === 'hover') { endToast(); setOpen(true); } });
+$('#pill').addEventListener('click', () => { if (replyToastOn && !alarmCtx) { endToast(); if (openMode === 'click') { setOpen(true); pinned = true; api.pin(true); } } });
 // ---- the reply field of a message banner: it stays while the pointer is on it or something is typed, and goes a few seconds after
 const replyIn = $('#toast-reply-in');
 const replyRest = (ms) => { clearTimeout(toastTimer); toastTimer = setTimeout(() => { if (document.activeElement === replyIn || replyIn.value.trim()) return; endToast(); }, ms); };

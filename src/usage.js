@@ -211,4 +211,4 @@ async function get(appMb, planOn, webFetch) {
   return { ram: r, plan: pl };
 }
 
-module.exports = { get, readLine, perDay, seen, parsePlan, resetPlan };
+module.exports = { get, readLine, perDay, seen, parsePlan, resetPlan, plan, ram };

@@ -14,6 +14,8 @@ const { Calibrator, ZoneTracker } = require('./gaze');
 const { keyboard, Key } = require('@nut-tree-fork/nut-js');
 const { WaNotifier } = require('./notify');
 const { Water } = require('./water');
+const { ClaudeJobs } = require('./claude-jobs');
+const { Perf } = require('./perf');
 const { WaConnect } = require('./wa-connect');
 const usage = require('./usage');
 // which data folder this run uses (and whether another A-tuls is really running): decided before the settings are read
@@ -41,7 +43,7 @@ const store = (() => {
 // The pairing tokens let another computer drive this one, so on disk they are encrypted with the system's own protection (Windows DPAPI,
 // the macOS Keychain) instead of lying in config.json as plain text. Old plain values are sealed the first time they are read. macOS
 // only does this in the installed app: a development run would ask for Keychain access each time.
-const SECRET_KEYS = new Set(['tokens', 'peers', 'peerTokens', 'calendars', 'waLog']); // (waLog: the WhatsApp messages listed on the island)
+const SECRET_KEYS = new Set(['tokens', 'peers', 'peerTokens', 'calendars', 'waLog', 'waPics']); // (waLog: the WhatsApp messages listed on the island)
 function protectedStore(base) {
   const canSeal = () => { try { return (process.platform === 'win32' || app.isPackaged) && safeStorage.isEncryptionAvailable(); } catch { return false; } };
   const seal = (v) => ({ enc: safeStorage.encryptString(JSON.stringify(v)).toString('base64') });
@@ -163,7 +165,8 @@ const TUNES = {
   err: [[330, 0, 0.14, 'triangle'], [247, 0.17, 0.26, 'triangle']],
   shot: [[2400, 0, 0.03, 'square'], [1500, 0.035, 0.07, 'sine']],
   impact: [[95, 0, 0.14, 'sine'], [58, 0.015, 0.2, 'sine'], [1900, 0, 0.012, 'square']],
-  start: [[196, 0, 0.7, 'triangle'], [392, 0.02, 0.14], [523, 0.14, 0.14], [659, 0.26, 0.14], [784, 0.38, 0.16], [1047, 0.52, 0.6]],
+  // the start sound: a low "tu" and a big warm chord that blooms and rings (D major, low to high), then one bright spark: short, and the same every time
+  start: [[73.4, 0, 0.34, 'sine', 1], [146.8, 0, 0.3, 'triangle', 0.6], [73.4, 0.38, 1.4, 'sine', 1], [146.8, 0.38, 1.3, 'triangle', 0.7], [220, 0.39, 1.2, 'sine', 0.5], [293.7, 0.4, 1.1, 'sine', 0.45], [440, 0.42, 1, 'sine', 0.35], [880, 0.55, 0.6, 'sine', 0.18]],
   chat: [[1047, 0, 0.07], [1397, 0.08, 0.12]],
   water: [[784, 0, 0.12], [988, 0.14, 0.12], [1319, 0.28, 0.12], [1568, 0.42, 0.3]],
 };
@@ -172,12 +175,12 @@ function toneFile(kind) {
   if (fs.existsSync(file)) return file;
   const rate = 22050, tune = TUNES[kind] || TUNES.ok;
   const n = Math.ceil(Math.max(...tune.map(([, at, len]) => at + len + 0.12)) * rate), mix = new Float32Array(n);
-  for (const [freq, at, len, wave] of tune) {
+  for (const [freq, at, len, wave, gn = 1] of tune) {
     const s0 = Math.floor(at * rate), dur = len + 0.06, s1 = Math.min(n, Math.floor((at + dur) * rate));
     for (let i = s0; i < s1; i++) {
       const t = (i - s0) / rate, ph = 2 * Math.PI * freq * t;
       const w = wave === 'triangle' ? (2 / Math.PI) * Math.asin(Math.sin(ph)) : wave === 'square' ? (Math.sin(ph) >= 0 ? 0.5 : -0.5) : Math.sin(ph);
-      mix[i] += w * Math.min(1, t / 0.012) * Math.pow(0.002, t / dur);
+      mix[i] += gn * w * Math.min(1, t / 0.012) * Math.pow(0.002, t / dur);
     }
   }
   let peak = 0.001; for (const v of mix) peak = Math.max(peak, Math.abs(v));
@@ -1518,6 +1521,7 @@ app.whenReady().then(() => {
       else if (c === 'assoctest') { hookLogUntil = Date.now() + 16000; lifecycle.line('test: mouse disconnected from the cursor for 14 s: ' + native.macAssociate(false)); setTimeout(() => lifecycle.line('test: mouse connected again: ' + native.macAssociate(true)), 14000); }
       else if (c === 'radialtest') radial.open('test');
       else if (c.startsWith('wafake:')) { const [title, text, from] = c.slice(7).split('|'); waAdd([{ k: 'fake_' + Date.now(), chat: 'fake_' + title, title, from: from || '', text: text || '', at: Date.now(), group: !!from }]); lifecycle.line('test: fake WhatsApp message added'); } // development test: a made-up message on the WhatsApp page
+      else if (c.startsWith('claudefake:')) { const [title, text] = c.slice(11).split('|'); claudeNotifier.emit('messages', [{ k: 'fake_' + Date.now(), chat: 'claude', title: title || 'Claude', text: text || '', at: Date.now(), group: false }], false); lifecycle.line('test: a Claude notification was made up'); } // development test: the same path a notification of the Claude app takes
       else if (c === 'wareset') { waItems = []; waSave(); notifier.stop(); notifier.lastId = 0; if (waOn) notifier.start(); waPush(); lifecycle.line('test: WhatsApp list emptied and read again'); } // development test: forget the list and read the notifications again (silently)
       else if (c === 'toastreply') { toast('Budi', 'Halo, sudah makan belum?', 'ok', { icon: 'chat', reply: { chat: '1@lid', preview: 'Halo' } }); lifecycle.line('test: message banner with a reply field shown'); } // development test: the banner with a field to answer in
       else if (c === 'waterring') { water.ring(); waterSave(); lifecycle.line('test: water reminder rung'); }
@@ -1704,10 +1708,12 @@ app.whenReady().then(() => {
   const lookState = () => {
     let profile = '';
     try { profile = 'data:image/png;base64,' + fs.readFileSync(profileFile()).toString('base64'); } catch {}
-    return { accent: colorOk(store.get('accent', '')) || '#0a84ff', profile, pillPos: store.get('pillPos', 'center'), claudeNotify: store.get('claudeNotify', true) !== false, canClaudeNotify: process.platform === 'win32', waBannerSec: Math.min(60, Math.max(2, Number(store.get('waBannerSec', 5)) || 5)), openMode: store.get('openMode', 'hover') === 'click' ? 'click' : 'hover', navMode: store.get('navMode', 'hover') === 'click' ? 'click' : 'hover' };
+    return { accent: colorOk(store.get('accent', '')) || '#0a84ff', profile, pillPos: store.get('pillPos', 'center'), claudeNotify: store.get('claudeNotify', true) !== false, musicApp: store.get('musicApp', 'spotify'), musicName: path.basename(String(store.get('musicPath', ''))).replace(/\.(exe|lnk|app)$/i, ''), lyricOffset: Math.min(3, Math.max(-3, Number(store.get('lyricOffset', -0.3)))), canClaudeNotify: process.platform === 'win32', waBannerSec: Math.min(60, Math.max(2, Number(store.get('waBannerSec', 5)) || 5)), openMode: store.get('openMode', 'hover') === 'click' ? 'click' : 'hover', navMode: store.get('navMode', 'hover') === 'click' ? 'click' : 'hover' };
   };
   // how the island is shown and how its tab buttons work: 'hover' (the pointer rests on it) or 'click'
   ipcMain.handle('look:set', (_e, key, v) => {
+    if (key === 'lyricOffset') { store.set(key, Math.min(3, Math.max(-3, Math.round((Number(v) || 0) * 10) / 10))); lifecycle.line('settings: lyrics timing ' + store.get(key) + ' s'); sendWin('look', lookState()); return lookState(); }
+    if (key === 'musicApp') { const v2 = ['spotify', 'apple', 'ytmusic', 'custom', 'none'].includes(v) ? v : 'spotify'; store.set(key, v2); lifecycle.line('settings: music app ' + v2); sendWin('look', lookState()); return lookState(); }
     if (key === 'claudeNotify') { store.set(key, !!v); lifecycle.line('settings: Claude notifications ' + (v ? 'on' : 'off')); claudeApply(); sendWin('look', lookState()); return lookState(); }
     if (key === 'waBannerSec') { store.set(key, Math.min(60, Math.max(2, Number(v) || 6))); lifecycle.line('settings: message banner stays ' + store.get(key) + ' s'); sendWin('look', lookState()); return lookState(); }
     if (key !== 'openMode' && key !== 'navMode') return lookState();
@@ -1723,6 +1729,11 @@ app.whenReady().then(() => {
     return clean;
   });
   ipcMain.handle('look:get', lookState);
+  ipcMain.handle('music:choose', async () => {
+    const r = await dialog.showOpenDialog({ title: 'Choose the music app', properties: MAC ? ['openFile', 'openDirectory'] : ['openFile'], filters: MAC ? [{ name: 'Applications', extensions: ['app'] }] : [{ name: 'Applications', extensions: ['exe', 'lnk'] }] });
+    if (!r.canceled && r.filePaths[0]) { store.set('musicPath', r.filePaths[0]); store.set('musicApp', 'custom'); lifecycle.line('settings: music app ' + r.filePaths[0]); sendWin('look', lookState()); }
+    return lookState();
+  });
   ipcMain.handle('look:pos', (_e, v) => { store.set('pillPos', v === 'right' ? 'right' : 'center'); lifecycle.line('settings: pill position ' + store.get('pillPos')); placeWindow(); sendWin('look', lookState()); return lookState(); });
   ipcMain.handle('look:accent', (_e, v) => { store.set('accent', colorOk(v)); lifecycle.line('settings: decoration colour ' + store.get('accent')); sendWin('look', lookState()); return lookState(); });
   ipcMain.handle('profile:choose', async () => {
@@ -1837,7 +1848,28 @@ app.whenReady().then(() => {
     try { e.sender.startDrag({ file: p, icon: dragIcon }); } catch (err) { console.error('drag-out:', err.message); }
   });
   const keys = { play: Key.AudioPlay, next: Key.AudioNext, prev: Key.AudioPrev };
-  const runMediaKey = (k) => {
+  // The music app that a press on play opens when nothing is playing (Settings > General > Music app). A moment later play is pressed for the person,
+  // when the app has no music going of its own.
+  let musicOpenedAt = 0;
+  const openMusicApp = () => {
+    const which = store.get('musicApp', 'spotify');
+    if (which === 'none') return false;
+    if (Date.now() - musicOpenedAt < 8000) return true; // it was just opened: do not open it again
+    musicOpenedAt = Date.now();
+    const web = (u) => shell.openExternal(u).catch(() => {});
+    try {
+      if (which === 'custom') { const p = store.get('musicPath', ''); if (!p) return false; shell.openPath(p).catch(() => {}); }
+      else if (MAC) spawn('open', ['-a', which === 'apple' ? 'Music' : 'Spotify']).on('error', () => {});
+      else if (which === 'spotify') shell.openExternal('spotify:').catch(() => web('https://open.spotify.com'));
+      else if (which === 'apple') shell.openExternal('music://').catch(() => web('https://music.apple.com'));
+      else web('https://music.youtube.com');
+    } catch { return false; }
+    lifecycle.line('music: nothing played, opened ' + which);
+    if (which !== 'ytmusic') setTimeout(() => { if (!lastMedia) { try { runMediaKey('play', true); } catch {} } }, 3800);
+    return true;
+  };
+  const runMediaKey = (k, noOpen) => {
+    if (k === 'play' && !noOpen && !lastMedia && openMusicApp()) return;
     if (MAC) { macMediaCommand(k); return; }
     if (['play', 'next', 'prev'].includes(k) && mediaSend && mediaSend(k)) return; // direct and instant
     keys[k] && keyboard.type(keys[k]).catch(() => {}); // fallback: a media key press
@@ -1884,7 +1916,34 @@ app.whenReady().then(() => {
   });
   let waPeerConn = false; // the other computer is connected to WhatsApp (so it can send an answer for this one)
   const waCanReply = () => waConn.state === 'open' || (waPeerConn && !!link.sock);
-  const waState = () => ({ on: waOn, canRead: notifier.available(), items: waItems, names: waNames, conn: waConn.info(), canReply: waCanReply() });
+  // profile pictures: small round pictures per chat, fetched once (from the connection, or from the address on a notification), kept sealed, shared with the other computer
+  const waPics = (() => { try { const p = secure.get('waPics', {}); return p && typeof p === 'object' ? p : {}; } catch { return {}; } })();
+  const waPicTried = new Map();
+  const waSavePics = () => { const ks = Object.keys(waPics); if (ks.length > 150) for (const k of ks.slice(0, ks.length - 150)) delete waPics[k]; try { secure.set('waPics', waPics); } catch {} };
+  const waFetchPic = async (chat, url) => {
+    if (!chat || !/^https:/.test(String(url))) return;
+    try {
+      const res = await fetch(url, { signal: AbortSignal.timeout(7000) });
+      if (!res.ok) return;
+      const img = nativeImage.createFromBuffer(Buffer.from(await res.arrayBuffer()));
+      if (img.isEmpty()) return;
+      const pic = 'data:image/jpeg;base64,' + img.resize({ width: 72, height: 72 }).toJPEG(70).toString('base64');
+      waPics[chat] = pic; waSavePics(); waPush();
+      if (link.sock) link.send({ t: 'wapic', chat, pic });
+    } catch { /* no picture: the initials stay */ }
+  };
+  const waEnsurePics = async () => {
+    if (waConn.state !== 'open') return;
+    const chats = [...new Set(waItems.map((e) => e.chat))].filter((c) => !waPics[c] && Date.now() - (waPicTried.get(c) || 0) > 6 * 3600000).slice(0, 6);
+    for (const c of chats) { waPicTried.set(c, Date.now()); const url = await waConn.picture(c); if (url) await waFetchPic(c, url); }
+  };
+  // a chat that was answered (here, on the other computer or in WhatsApp itself) leaves the list
+  const waDropChat = (chat, remote) => {
+    if (!waItems.some((e) => e.chat === chat)) return;
+    waItems = waItems.filter((e) => e.chat !== chat); waSave(); waPush();
+    if (!remote && link.sock) link.send({ t: 'wadrop', chat });
+  };
+  const waState = () => ({ on: waOn, canRead: notifier.available(), items: waItems, names: waNames, conn: waConn.info(), canReply: waCanReply(), pics: waPics });
   const waPush = () => sendWin('wa', waState());
   const waSave = () => { try { secure.set('waLog', waItems); } catch {} };
   const waClean = (e) => ({ k: String(e.k).slice(0, 120), chat: String(e.chat || e.title || '').slice(0, 80), title: String(e.title || '').slice(0, 80), from: String(e.from || '').slice(0, 60), text: String(e.text || '').slice(0, 400), at: Number(e.at) || Date.now(), group: !!e.group, tagged: !!e.tagged, mine: !!e.mine, q: e.q && e.q.id ? { id: String(e.q.id).slice(0, 80), participant: String(e.q.participant || '').slice(0, 80) } : undefined });
@@ -1894,7 +1953,7 @@ app.whenReady().then(() => {
     const fresh = list.filter((e) => e && typeof e.k === 'string' && e.k && !have.has(e.k) && (remote || waShown(e))).map(waClean);
     if (!fresh.length) return;
     waItems = waItems.concat(fresh).sort((a, b) => a.at - b.at).slice(-WA_MAX);
-    waSave(); waPush();
+    waSave(); waPush(); waEnsurePics();
     if (!remote && link.sock) link.send({ t: 'wa', items: fresh, silent });
     if (silent || !link.here()) return;
     const last = fresh[fresh.length - 1];
@@ -1903,16 +1962,18 @@ app.whenReady().then(() => {
     toast(fresh.length > 1 ? `${last.title} (+${fresh.length - 1})` : last.title, last.group && last.from ? `${last.from}: ${last.text}` : last.text, 'ok', { icon: 'chat', secs: Math.min(60, Math.max(2, Number(store.get('waBannerSec', 5)) || 5)), reply: waCanReply() && /@/.test(last.chat) ? { chat: last.chat, q: last.q, preview: last.text.slice(0, 100) } : undefined });
   };
   // with a connection the messages come from it; the notifications are then only read for the names they show (the person's own names for the chats)
-  notifier.on('messages', (list, silent) => {
-    if (!waOn) return;
-    if (waConn.state === 'open') { for (const e of list) waConn.learnTitle(e.chat, e.title, e.group); return; }
-    waAdd(list, { silent });
+  notifier.on('messages', (list) => { // only while connected, and only for the names and pictures WhatsApp Desktop shows: the messages themselves come from the connection
+    if (waConn.state !== 'open') return;
+    for (const e of list) { if (e.img && !waPics[e.chat]) waFetchPic(e.chat, e.img); waConn.learnTitle(e.chat, e.title, e.group); }
   });
-  waConn.on('messages', (list) => { if (waOn) waAdd(list); });
+  waConn.on('messages', (list) => waAdd(list));
+  waConn.on('replied', (jid) => { lifecycle.line('whatsapp: a chat was answered in WhatsApp'); waDropChat(jid); });
+  link.on('wapic', (chat, pic) => { waPics[chat] = pic; waSavePics(); waPush(); });
+  link.on('wadrop', (chat) => waDropChat(chat, true));
   waConn.on('problem', (m) => lifecycle.line('whatsapp: ' + m));
   waConn.on('state', () => {
     lifecycle.line('whatsapp connection: ' + waConn.state + (waConn.name ? ' as ' + waConn.name : ''));
-    if (waOn) notifier.start();
+    if (waConn.state === 'open') { notifier.start(); waEnsurePics(); } else notifier.stop();
     if (link.sock) link.send({ t: 'wastate', open: waConn.state === 'open' });
     waPush();
   });
@@ -1920,13 +1981,12 @@ app.whenReady().then(() => {
   link.on('status', (st) => { if (st.connected && waConn.state === 'open') link.send({ t: 'wastate', open: true }); if (!st.connected) { waPeerConn = false; waPush(); } });
   // an answer typed on the other computer, which has no connection of its own: it is sent from here
   link.on('wareply', async (m) => {
-    try { await waConn.send(String(m.jid), String(m.text), m.q); link.send({ t: 'wareplied', ok: true, jid: m.jid }); } catch (e) { link.send({ t: 'wareplied', ok: false, error: String(e.message).slice(0, 80) }); }
+    try { await waConn.send(String(m.jid), String(m.text), m.q); waDropChat(String(m.jid)); link.send({ t: 'wareplied', ok: true, jid: m.jid }); } catch (e) { link.send({ t: 'wareplied', ok: false, error: String(e.message).slice(0, 80) }); }
   });
   link.on('wareplied', (m) => { if (!m.ok) toast('Reply not sent', m.error || 'WhatsApp is not connected', 'err'); });
   notifier.on('seen', (id) => store.set('waLastId', id));
   notifier.on('problem', (m) => lifecycle.line('whatsapp notifications could not be read: ' + m));
-  link.on('wa', (items, silent) => { if (waOn) waAdd(items, { remote: true, silent }); });
-  if (waOn) notifier.start();
+  link.on('wa', (items, silent) => waAdd(items, { remote: true, silent })); // what the other computer (the one that is connected) passes on
   if (waOn && waConn.hasSession()) waConn.start().catch(() => {}); // linked before: connect again by itself
   ipcMain.handle('wa:get', () => waState());
   ipcMain.handle('wa:connect', async () => {
@@ -1935,7 +1995,7 @@ app.whenReady().then(() => {
     waConn.start().catch(() => {});
     waPush(); return waState();
   });
-  ipcMain.handle('wa:disconnect', async () => { lifecycle.line('whatsapp: unlinking'); await waConn.logout(); if (waOn) notifier.start(); waPush(); return waState(); });
+  ipcMain.handle('wa:disconnect', async () => { lifecycle.line('whatsapp: unlinking'); await waConn.logout(); waOn = false; store.set('waOn', false); notifier.stop(); waItems = []; waSave(); waPush(); return waState(); });
   ipcMain.handle('wa:cancel', async () => { await waConn.stop(false); waPush(); return waState(); });
   // answer a chat: sent here when this computer is connected, else by the other computer
   ipcMain.handle('wa:reply', async (_e, jid, text, q) => {
@@ -1944,18 +2004,17 @@ app.whenReady().then(() => {
     try {
       if (waConn.state === 'open') {
         await waConn.send(jid, text, q);
-        const known = waItems.find((e) => e.chat === jid);
-        waAdd([{ k: 'me_' + Date.now(), chat: jid, title: known ? known.title : jid.split('@')[0], from: 'You', text, at: Date.now(), group: jid.endsWith('@g.us'), tagged: true, mine: true }], { silent: true });
+        waDropChat(jid); // answered: the chat leaves the list
         lifecycle.line('whatsapp: reply sent');
         return { ok: true };
       }
-      if (waPeerConn && link.sock) { link.send({ t: 'wareply', jid, text, q }); lifecycle.line('whatsapp: reply passed to the other computer'); return { ok: true, via: 'peer' }; }
+      if (waPeerConn && link.sock) { link.send({ t: 'wareply', jid, text, q }); waDropChat(jid, true); lifecycle.line('whatsapp: reply passed to the other computer'); return { ok: true, via: 'peer' }; }
       return { ok: false, error: 'WhatsApp is not connected' };
     } catch (e) { lifecycle.line('whatsapp: reply failed: ' + e.message); return { ok: false, error: String(e.message).slice(0, 80) }; }
   });
   ipcMain.handle('wa:set', (_e, on) => {
     waOn = !!on; store.set('waOn', waOn);
-    if (waOn) { notifier.start(); if (waConn.hasSession() && waConn.state === 'off') waConn.start().catch(() => {}); } else { notifier.stop(); waConn.stop(false); waItems = []; waSave(); } // switching it off also forgets the messages
+    if (waOn) { if (waConn.hasSession() && waConn.state === 'off') waConn.start().catch(() => {}); } else { notifier.stop(); waConn.stop(false); waItems = []; waSave(); } // switching it off also forgets the messages
     lifecycle.line('whatsapp messages ' + (waOn ? 'on' : 'off'));
     waPush(); return waState();
   });
@@ -1980,7 +2039,7 @@ app.whenReady().then(() => {
     if (silent || !store.get('claudeNotify', true)) return;
     const e = list[list.length - 1];
     lifecycle.line('claude: ' + list.length + ' notification' + (list.length > 1 ? 's' : '') + (link.here() ? ' shown' : ' passed on'));
-    if (link.here()) toast(e.title || 'Claude', e.text || '', 'ok', { icon: 'claude' });
+    if (link.here()) toast(e.title || 'Claude', e.text || '', 'ok', { icon: 'claude', alarm: { id: 'claude', soft: true, secs: 20, hover: 'claude', actions: [] } }); // no buttons: the pointer on the banner opens the Claude Code tab (the answer itself, allow or deny, is given in Claude)
     else if (link.sock) link.send({ t: 'notice', title: String(e.title || 'Claude').slice(0, 60), text: String(e.text || '').slice(0, 140), kind: 'ok' });
   });
   const claudeApply = () => { if (store.get('claudeNotify', true) && claudeNotifier.available()) claudeNotifier.start(); else claudeNotifier.stop(); };
@@ -1992,10 +2051,46 @@ app.whenReady().then(() => {
   const claudeFetch = (url) => claudeSes().fetch(url, { headers: { Accept: 'application/json' } });
   let claudeWin = null;
   let loggedKeys = '';
-  ipcMain.handle('usage:get', async () => {
-    const r = await usage.get(app.getAppMetrics().reduce((a, p) => a + (p.memory.workingSetSize || 0), 0) / 1024, !!store.get('planOn', false), claudeFetch);
-    if (r.plan && r.plan.keys && r.plan.keys.join() !== loggedKeys) { loggedKeys = r.plan.keys.join(); lifecycle.line('usage: the limits came with ' + loggedKeys); }
-    return r;
+  // the Claude page: what Claude Code is doing (its session files) and the limits of the plan
+  const claudeJobs = new ClaudeJobs();
+  // An answer chosen (or typed) in the island: the Claude window comes forward and the text is pasted and sent, as if it was typed there.
+  // (The clipboard is used for the text and put back after.)
+  let claudeAnswerAt = 0;
+  ipcMain.handle('claude:answer', async (_e, text) => {
+    text = String(text || '').trim().slice(0, 2000);
+    if (!text || Date.now() - claudeAnswerAt < 1500) return false;
+    claudeAnswerAt = Date.now();
+    const prev = clipboard.readText();
+    clipboard.writeText(text);
+    const done = (ok) => { setTimeout(() => { try { clipboard.writeText(prev); } catch {} }, 1800); lifecycle.line('claude: answer ' + (ok ? 'sent' : 'not sent') + ' (' + text.length + ' letters)'); return ok; };
+    try {
+      if (MAC) {
+        await new Promise((res, rej) => require('child_process').execFile('osascript', ['-e', 'tell application "Claude" to activate', '-e', 'delay 0.6', '-e', 'tell application "System Events" to keystroke "v" using command down', '-e', 'delay 0.2', '-e', 'tell application "System Events" to key code 36'], { timeout: 8000 }, (err) => (err ? rej(err) : res())));
+        return done(true);
+      }
+      // (no resizing: the window is only restored when it is minimized; the keys are sent with keybd_event, which is quicker than loading SendKeys)
+      const ps = "Add-Type 'using System;using System.Runtime.InteropServices;public class W{[DllImport(\"user32.dll\")]public static extern bool SetForegroundWindow(IntPtr h);[DllImport(\"user32.dll\")]public static extern bool ShowWindow(IntPtr h,int c);[DllImport(\"user32.dll\")]public static extern bool IsIconic(IntPtr h);[DllImport(\"user32.dll\")]public static extern IntPtr GetForegroundWindow();[DllImport(\"user32.dll\")]public static extern void keybd_event(byte k,byte s,int f,int e);}'; "
+        + "$p = Get-Process Claude -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1; if (-not $p) { exit 2 }; "
+        + "$h = $p.MainWindowHandle; if ([W]::IsIconic($h)) { [W]::ShowWindow($h, 9) | Out-Null }; [W]::keybd_event(0x12, 0, 0, 0); [W]::SetForegroundWindow($h) | Out-Null; [W]::keybd_event(0x12, 0, 2, 0); "
+        + "$n = 0; while ([W]::GetForegroundWindow() -ne $h -and $n -lt 20) { Start-Sleep -Milliseconds 50; $n++ }; if ([W]::GetForegroundWindow() -ne $h) { exit 3 }; Start-Sleep -Milliseconds 150; "
+        + "[W]::keybd_event(0x11, 0, 0, 0); [W]::keybd_event(0x56, 0, 0, 0); [W]::keybd_event(0x56, 0, 2, 0); [W]::keybd_event(0x11, 0, 2, 0); Start-Sleep -Milliseconds 120; [W]::keybd_event(0x0D, 0, 0, 0); [W]::keybd_event(0x0D, 0, 2, 0)";
+      const code = await new Promise((res) => require('child_process').execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-EncodedCommand', Buffer.from(ps, 'utf16le').toString('base64')], { timeout: 10000, windowsHide: true }, (err) => res(err ? (err.code || 1) : 0)));
+      return done(code === 0);
+    } catch { return done(false); }
+  });
+  ipcMain.handle('claude:get', async () => {
+    await claudeJobs.refresh();
+    const plan = await usage.plan(!!store.get('planOn', false), claudeFetch);
+    if (plan && plan.keys && plan.keys.join() !== loggedKeys) { loggedKeys = plan.keys.join(); lifecycle.line('usage: the limits came with ' + loggedKeys); }
+    return { jobs: claudeJobs.status(), plan };
+  });
+  // the CPU page: CPU, memory, disk, network and graphics with a minute of history (detail = the page with the lists is open)
+  const perf = new Perf();
+  app.on('will-quit', () => perf.close());
+  ipcMain.handle('perf:get', async (_e, detail) => {
+    const s = perf.snapshot(!!detail);
+    if (detail) { try { s.top = (await usage.ram(app.getAppMetrics().reduce((a, p) => a + (p.memory.workingSetSize || 0), 0) / 1024)).top; } catch { s.top = []; } }
+    return s;
   });
   ipcMain.handle('usage:claudeLogin', () => {
     if (claudeWin && !claudeWin.isDestroyed()) { claudeWin.show(); claudeWin.focus(); return; }

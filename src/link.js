@@ -1524,6 +1524,8 @@ class Link extends EventEmitter {
       case 'release': if (this.state === 'controlled') { this.state = 'idle'; this.owner = 'peer'; this.notify(); } break;
       case 'sync': this.emit('sync', m.items); break; // settings changed on the other computer
       case 'wa': if (Array.isArray(m.items)) this.emit('wa', m.items.slice(0, 60), !!m.silent); break; // WhatsApp messages the other computer read from its notifications
+      case 'wapic': if (typeof m.chat === 'string' && typeof m.pic === 'string' && m.pic.startsWith('data:image/') && m.pic.length < 60000) this.emit('wapic', m.chat.slice(0, 80), m.pic); break; // a profile picture the other computer fetched
+      case 'wadrop': if (typeof m.chat === 'string') this.emit('wadrop', m.chat.slice(0, 80)); break; // a chat was answered on the other computer
       case 'wastate': this.emit('wastate', !!m.open); break; // the other computer is (not) connected to WhatsApp
       case 'wareply': if (m && typeof m.jid === 'string' && typeof m.text === 'string') this.emit('wareply', { jid: m.jid.slice(0, 80), text: m.text.slice(0, 2000), q: m.q && typeof m.q === 'object' ? { id: String(m.q.id || '').slice(0, 80), participant: String(m.q.participant || '').slice(0, 80), preview: String(m.q.preview || '').slice(0, 200) } : undefined }); break; // an answer to send from here
       case 'wareplied': this.emit('wareplied', { ok: !!m.ok, error: String(m.error || '').slice(0, 80) }); break;

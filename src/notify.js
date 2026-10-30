@@ -23,6 +23,10 @@ function parseToast(xml, tag, arrivedAt, rowId) {
     const m = /^([^:\n]{1,60}): ([\s\S]*)$/.exec(text);
     if (m) { from = m[1]; text = m[2]; }
   }
+  // the round profile picture of the chat
+  let img = '';
+  const im = /<image\b[^>]*placement="appLogoOverride"[^>]*>/.exec(xml);
+  if (im) { const sm = /src="([^"]*)"/.exec(im[0]); if (sm) img = unescapeXml(sm[1]); }
   // the launch argument holds a key that is unique for the message ("msg:false_<chat>_<id>")
   const launch = /launch="([^"]*)"/.exec(xml);
   let key = '';
@@ -35,6 +39,7 @@ function parseToast(xml, tag, arrivedAt, rowId) {
     text: text.slice(0, 400),
     at: arrivedAt,
     group,
+    img: img.slice(0, 600),
   };
 }
 
@@ -69,7 +74,9 @@ class WaNotifier extends EventEmitter {
       const sig = [this.file, this.file + '-wal'].map((f) => { try { const s = fs.statSync(f); return s.mtimeMs + ':' + s.size; } catch { return '-'; } }).join('|');
       if (sig === this.sig) return;
       db = new DatabaseSync(this.file, { readOnly: true });
-      const handlers = db.prepare('select RecordId from NotificationHandler where PrimaryId like ?').all(this.like).map((r) => Number(r.RecordId));
+      const found = db.prepare('select RecordId, PrimaryId from NotificationHandler where PrimaryId like ?').all(this.like);
+      if (found.length) this.appId = String(found[0].PrimaryId); // the id of the app (to open it)
+      const handlers = found.map((r) => Number(r.RecordId));
       if (!handlers.length) { this.sig = sig; return; }
       const rows = db.prepare(`select Id, Tag, Payload, (ArrivalTime / 10000 - ${FILETIME_TO_MS}) as ms from Notification where Type = 'toast' and Id > ? and HandlerId in (${handlers.join(',')}) order by Id limit 200`).all(this.lastId);
       this.sig = sig;

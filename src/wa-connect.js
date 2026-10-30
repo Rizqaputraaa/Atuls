@@ -184,12 +184,14 @@ class WaConnect extends EventEmitter {
   learnTitle(chat, title, group) { if (!chat || !title) return; if (group) this.groups.set(chat, title); else this.learn({ id: chat, name: title }); }
 
   async onMessages(sock, { messages, type }) {
-    if (sock !== this.sock || type !== 'notify') return;
+    if (sock !== this.sock || (type !== 'notify' && type !== 'append')) return;
     const B = this.B, out = [];
     for (const m of messages || []) {
       try {
         const jid = m.key && m.key.remoteJid;
-        if (!m.message || !jid || m.key.fromMe || jid === 'status@broadcast' || jid.endsWith('@newsletter') || jid.endsWith('@broadcast')) continue;
+        if (!m.message || !jid || jid === 'status@broadcast' || jid.endsWith('@newsletter') || jid.endsWith('@broadcast')) continue;
+        if (m.key.fromMe) { if (type === 'notify') this.emit('replied', jid); continue; } // answered on the phone or in WhatsApp Desktop: the chat needs no more attention
+        if (type !== 'notify') continue;
         const c = B.normalizeMessageContent(m.message);
         const text = WaConnect.textOf(c).trim();
         if (!text) continue; // reactions, protocol messages, edits...
@@ -209,6 +211,12 @@ class WaConnect extends EventEmitter {
       } catch { /* a message we cannot read is skipped */ }
     }
     if (out.length) this.emit('messages', out);
+  }
+
+  // the address of the profile picture of a chat or group (nothing when it is hidden or there is none)
+  async picture(jid) {
+    if (!this.sock || this.state !== 'open') return null;
+    try { return (await Promise.race([this.sock.profilePictureUrl(jid, 'preview'), new Promise((_r, rej) => setTimeout(() => rej(new Error('slow')), 5000))])) || null; } catch { return null; }
   }
 
   // an answer typed on the island; quoted = the message it answers (groups)
