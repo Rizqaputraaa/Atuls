@@ -11,6 +11,8 @@ let mixerOpen = false, mixTimer = null, mixDrag = 0, mixSyncAt = 0, mixSig = '';
 
 // The main process polls the cursor and tells us when it is over the island
 const MACOS = api.platform === 'darwin';
+var replyMs = 5000;
+var alarmCtx = null, alarmSound = null; // an alarm banner: it stays and its sound comes back until one of its buttons is pressed
 var replyToastOn = false, replyCtx = null; // a message banner with a field to answer in (it takes the pointer and the keyboard, so hovering must not open the panel meanwhile)
 const toastSize = () => [Math.max(SIZES.toast[0], SIZES.compact[0] + 32), SIZES.toast[1] + (replyToastOn ? 48 : 0)]; // the banner is never narrower than the pill above it
 const SIZES = { compact: MACOS ? [464, 34] : [234, 34], open: [624, 410], toast: MACOS ? [520, 100] : [380, 100] };
@@ -34,7 +36,7 @@ const setOpen = (v) => {
   applyKara();
   island.classList.toggle('open', v);
   island.classList.toggle('compact', !v);
-  api.islandSize(...SIZES[v ? 'open' : 'compact']);
+  api.islandSize(...(v ? SIZES.open : replyToastOn ? toastSize() : SIZES.compact)); // (a banner with a reply field is still there: it keeps taking clicks)
   // the window is exactly as big as the island: grow at once, shrink after the animation
   clearTimeout(shrinkTimer);
   if (v) { endToast(); api.windowSize(...SIZES.open); }
@@ -613,9 +615,9 @@ function endToast() {
   if (typeof stopRing === 'function') stopRing();
   if (!toastOn) return;
   toastOn = false;
-  replyToastOn = false; replyCtx = null;
+  replyToastOn = false; replyCtx = null; alarmStop();
   island.classList.remove('toast', 'treply');
-  $('#toast').classList.remove('reply'); $('#toast-reply').hidden = true;
+  $('#toast').classList.remove('reply', 'alarm'); $('#toast-reply').hidden = true; $('#toast-actions').hidden = true;
   if (!isOpen) { api.islandSize(...SIZES.compact); api.windowSize(...SIZES.compact); }
 }
 let ringTimers = [];
@@ -673,9 +675,13 @@ function chime(kind, vol) {
   } catch {}
 }
 api.onChime((c) => chime(c.kind, c.vol));
-const soundKind = (t) => (t.kind === 'err' ? 'err' : t.icon === 'sent' ? 'sent' : t.icon === 'received' ? 'received' : t.icon === 'chat' ? 'chat' : t.icon === 'water' ? 'water' : /^Connected/.test(t.title || '') ? 'connected' : /^Screenshot/.test(t.title || '') ? 'shot' : 'ok');
+const soundKind = (t) => (t.kind === 'err' ? 'err' : t.icon === 'sent' ? 'sent' : t.icon === 'received' ? 'received' : t.icon === 'chat' || t.icon === 'claude' ? 'chat' : t.icon === 'water' ? 'water' : /^Connected/.test(t.title || '') ? 'connected' : /^Screenshot/.test(t.title || '') ? 'shot' : 'ok');
+function alarmStop() { clearInterval(alarmSound); alarmSound = null; alarmCtx = null; }
 api.onToast((t) => {
+  if (alarmCtx && !t.alarm) return; // an alarm waiting for its answer is not pushed away by another banner
   if (t.kind !== 'progress') chime(soundKind(t), t.sound || 0);
+  alarmStop();
+  if (t.alarm) { alarmCtx = t.alarm; alarmSound = setInterval(() => chime(soundKind(t), t.sound || 0), 8000); }
   stopRing();
   $('#toast-icon').classList.remove('hold');
   const err = t.kind === 'err', prog = t.kind === 'progress';
@@ -684,10 +690,12 @@ api.onToast((t) => {
   $('#toast').classList.toggle('err', err);
   $('#toast').classList.toggle('prog', prog);
   $('#toast').classList.toggle('water', t.icon === 'water');
-  replyToastOn = !!t.reply; replyCtx = t.reply || null;
-  $('#toast').classList.toggle('reply', replyToastOn); island.classList.toggle('treply', replyToastOn);
-  $('#toast-reply').hidden = !replyToastOn;
-  if (replyToastOn) { const inp = $('#toast-reply-in'); inp.value = ''; inp.placeholder = 'Reply to ' + String(t.title || '').split(' (+')[0] + '...'; }
+  replyToastOn = !!(t.reply || t.alarm); replyCtx = t.reply || null;
+  $('#toast').classList.toggle('reply', replyToastOn); island.classList.toggle('treply', replyToastOn); $('#toast').classList.toggle('alarm', !!t.alarm);
+  $('#toast-reply').hidden = !t.reply;
+  const acts = $('#toast-actions'); acts.textContent = ''; acts.hidden = !t.alarm;
+  if (t.alarm) for (const a of t.alarm.actions) { const b = mk('button', a.primary ? 'main' : '', a.label); b.onclick = () => { const ctx = alarmCtx; endToast(); if (ctx) api.alarmAct(ctx.id, a.key); }; acts.appendChild(b); }
+  if (t.reply) { const inp = $('#toast-reply-in'); inp.value = ''; inp.placeholder = 'Reply to ' + String(t.title || '').split(' (+')[0] + '...'; }
   $('#toast').classList.toggle('deco-icon', t.icon === 'sent' || t.icon === 'received' || t.icon === 'water'); // (not called 'ico': that class is the round icon button style)
   $('#toast-text').textContent = t.text;
   const gl = $('#toast-glyph');
@@ -699,6 +707,7 @@ api.onToast((t) => {
   else if (t.icon === 'sent') $('#toast-icon').innerHTML = '<svg viewBox="0 0 24 24"><path d="M4 12l16-8-6 16-3-7z"/></svg>';
   else if (t.icon === 'received') $('#toast-icon').innerHTML = '<svg viewBox="0 0 24 24"><path d="M12 4v11M7 11l5 5 5-5M5 20h14"/></svg>';
   else if (t.icon === 'chat') $('#toast-icon').innerHTML = '<svg viewBox="0 0 24 24"><path d="M4.5 5.5h15v10.5H11l-4.5 3.5V16h-2z" style="stroke-width:2.4;stroke-dasharray:none"/></svg>';
+  else if (t.icon === 'claude') $('#toast-icon').innerHTML = '<svg viewBox="0 0 24 24"><path d="M12 4v16M4.5 8l15 8M19.5 8l-15 8" style="stroke-width:2.4;stroke-dasharray:none"/></svg>';
   else if (t.icon === 'water') $('#toast-icon').innerHTML = '<svg viewBox="0 0 24 24"><path d="M12 3.5c3.4 4.1 5.5 7 5.5 10a5.5 5.5 0 0 1-11 0c0-3 2.1-5.9 5.5-10z" style="stroke-width:2.4;stroke-dasharray:none"/></svg>';
   else $('#toast-icon').innerHTML = err
     ? '<svg viewBox="0 0 24 24"><path d="M12 6.5v7"/><path d="M12 17.5v.01"/></svg>'
@@ -715,7 +724,8 @@ api.onToast((t) => {
   const box = $('#toast');
   box.classList.remove('play'); void box.offsetWidth; box.classList.add('play');
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(endToast, replyToastOn ? 20000 : prog ? ((t.ready || 3) + (t.hold || 2)) * 1000 + 6000 : 4500); // a step stays until the next message replaces it
+  if (t.reply) replyMs = Math.max(2000, (Number(t.secs) || 5) * 1000);
+  toastTimer = setTimeout(endToast, t.alarm ? 180000 : replyToastOn ? replyMs : prog ? ((t.ready || 3) + (t.hold || 2)) * 1000 + 6000 : 4500); // a step stays until the next message replaces it
 });
 
 // calendar: yesterday, today, tomorrow and the day after, with a coloured dot for every activity (Settings > Calendar connects the calendars)
@@ -1185,17 +1195,16 @@ function renderWa() {
     const body = mk('div', 'wa-body');
     const top = mk('div', 'wa-top'); top.appendChild(mk('b', '', head.title)); top.appendChild(mk('time', '', agoOf(last.at)));
     const msg = mk('div', 'wa-msg');
-    if (last.from) msg.appendChild(mk('i', '', last.from + ': '));
+    if (last.mine) { const t = mk('span', 'wa-tick'); t.innerHTML = '<svg viewBox="0 0 24 24"><path d="M1.5 13l4.5 4.5L14 8.5M9 16l1.5 1.5L19 8"/></svg>'; msg.appendChild(t); }
+    else if (last.from) msg.appendChild(mk('i', '', last.from + ': '));
     msg.appendChild(document.createTextNode(last.text));
-    const hist = mk('div', 'wa-hist');
-    for (const e of arr.slice(-8, -1).reverse()) { const d = mk('div'); d.appendChild(mk('time', '', clockOf(e.at))); d.appendChild(mk('span', '', (e.from ? e.from + ': ' : '') + e.text)); hist.appendChild(d); }
-    body.append(top, msg, hist);
+    body.append(top, msg);
+    const bar = mk('div', 'wa-bar');
     if (s.canReply && /@/.test(last.chat)) {
       const form = mk('form', 'wa-reply'), inp = mk('input'), go = mk('button', '', 'Send');
       inp.placeholder = 'Reply...'; inp.maxLength = 1000; inp.autocomplete = 'off'; inp.dataset.chat = last.chat; inp.value = waDrafts.get(last.chat) || '';
       inp.oninput = () => waDrafts.set(last.chat, inp.value);
       go.type = 'submit';
-      form.onclick = (ev) => ev.stopPropagation();
       form.onsubmit = (ev) => {
         ev.preventDefault();
         const text = inp.value.trim();
@@ -1204,14 +1213,20 @@ function renderWa() {
         ui('whatsapp: reply from the list');
         api.waReply(last.chat, text, head.q ? { ...head.q, preview: head.text.slice(0, 100) } : undefined).then((r) => {
           go.disabled = false;
-          if (r.ok) { inp.value = ''; waDrafts.delete(last.chat); inp.placeholder = 'Sent'; } else { inp.placeholder = r.error || 'Not sent'; }
+          if (r.ok) { inp.value = ''; waDrafts.delete(last.chat); waOpenChats.delete(last.chat); row.classList.remove('open'); } else { inp.placeholder = r.error || 'Not sent'; }
         });
       };
       form.append(inp, go);
-      body.appendChild(form);
+      bar.appendChild(form);
     }
+    const open = mk('button', 'wa-openchat'); open.type = 'button'; open.title = 'Open this chat in WhatsApp'; open.setAttribute('aria-label', 'Open this chat in WhatsApp');
+    open.innerHTML = '<svg viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-8.5 8.5M18 14v4.5a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 4 18.5v-11A1.5 1.5 0 0 1 5.5 6H10"/></svg>';
+    open.onclick = () => { ui('whatsapp: open the chat'); api.waOpen(last.chat); };
+    bar.appendChild(open);
+    bar.onclick = (ev) => ev.stopPropagation();
+    body.appendChild(bar);
     row.append(av, body);
-    if (arr.length > 1) row.appendChild(mk('span', 'wa-more', String(arr.length)));
+    
     row.onclick = () => { row.classList.toggle('open'); if (row.classList.contains('open')) waOpenChats.add(last.chat); else waOpenChats.delete(last.chat); };
     list.appendChild(row);
     if (focusChat === last.chat) { const i = row.querySelector('input'); if (i) { i.focus(); try { i.setSelectionRange(caret, caret); } catch { /* not a text field */ } } }
@@ -1230,7 +1245,6 @@ api.waGet().then((s) => { waSeenAt = Date.now(); waApply(s); });
 $('#wa-sw').onclick = () => { ui('whatsapp: switch ' + (waState.on ? 'off' : 'on')); api.waSet(!waState.on).then(waApply); };
 $('#wa-names-in').onchange = (e) => { ui('whatsapp: tag names changed'); api.waNames(e.target.value).then(waApply); };
 $('#wa-clear').onclick = () => { ui('whatsapp: list cleared'); api.waClear().then(waApply); };
-$('#wa-open').onclick = () => { ui('whatsapp: open the app'); api.waOpen(); };
 setInterval(() => { if (isOpen && PAGES[pageIdx] === 'chat' && waState.on && !(document.activeElement && document.activeElement.dataset && document.activeElement.dataset.chat)) renderWa(); }, 30000); // the times ("5 min") move on
 
 // ---- Water page: a reminder every so many minutes. The ring fills as the time to the next reminder runs out.
@@ -1282,43 +1296,53 @@ function renderUsage(u) {
     top.appendChild(row);
   }
   $('#u-app').textContent = 'A-tuls itself uses ' + fmtMem(r.app);
-  const a = u.ai, t = a.today, sum = t.input + t.output;
-  $('#u-tok').textContent = a.found ? fmtTok(sum) : '-';
-  $('#u-tok-of').textContent = a.found ? 'input + output · ' + t.answers + ' answers' : '';
-  const days = $('#u-days'); days.textContent = '';
-  const dmax = Math.max(1, ...a.days.map((d) => d.tokens));
-  a.days.forEach((d, i) => { const c = mk('div', 'u-day' + (i === a.days.length - 1 ? ' now' : '')); const b = mk('i'); b.style.height = Math.max(3, (d.tokens / dmax) * 100) + '%'; c.title = d.day + ': ' + fmtTok(d.tokens) + ' tokens'; c.append(b, mk('small', '', d.day.slice(3))); days.appendChild(c); });
-  const parts = $('#u-parts'); parts.textContent = '';
-  for (const [l, v] of [['Input', t.input], ['Output', t.output], ['Cache', t.cacheRead + t.cacheWrite]]) { const p = mk('span', '', l + ' '); p.appendChild(mk('b', '', fmtTok(v))); parts.appendChild(p); }
   renderPlan(u.plan);
-  $('#u-ai-foot').textContent = !a.found ? 'No Claude Code files found on this computer.' : a.scanning ? 'Reading the files...' : a.models.length ? a.models.map((m) => m.model + ' ' + fmtTok(m.tokens)).join(' · ') : 'Nothing used today yet';
 }
+// "Resets at 11:00 PM" (today) or "Resets Wed 9:00 AM"
 function resetText(at) {
-  const d = at - Date.now();
   if (!at) return '';
-  if (d <= 60000) return 'Resets soon';
-  const days = Math.floor(d / 86400000), hr = Math.floor((d % 86400000) / 3600000), min = Math.round((d % 3600000) / 60000);
-  return 'Resets in ' + (days >= 2 ? days + ' days' : hr + ' hr ' + min + ' min');
+  if (at - Date.now() <= 60000) return 'Resets soon';
+  const d = new Date(at), time = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  if (d.toDateString() === new Date().toDateString()) return 'Resets at ' + time;
+  return 'Resets ' + d.toLocaleDateString([], { weekday: 'short' }) + ' ' + time;
 }
 // the bars of the Claude plan (session and weekly limit), only when the person switched them on
 function renderPlan(p) {
   const box = $('#u-plan'); box.textContent = '';
+  $('#u-plan-name').textContent = p && p.ok && p.plan ? ' \u00b7 ' + p.plan : '';
+  $('#u-seeall').hidden = !(p && p.enabled);
+  $('#u-seeall').onclick = () => api.usageOpenWeb();
+  const note = (text) => box.appendChild(mk('div', 'u-planhint', text));
+  const link = (label, fn) => { const b = mk('button', 'wa-linkbtn', label); b.onclick = fn; return b; };
+  const acts = (...els) => { const d = mk('div', 'u-planacts'); d.append(...els); box.appendChild(d); };
   if (!p || !p.enabled) {
-    const b = mk('button', 'wa-linkbtn', 'Show my Claude plan limits'); b.title = 'Uses the Claude Code login on this computer to ask Anthropic for the percentages';
-    b.onclick = () => api.usagePlan(true).then(usageRefresh);
-    box.appendChild(b); return;
+    note('See how much of your Claude plan is used: the session limit and the weekly limit, like in Claude itself.');
+    const b = mk('button', 'wa-btn', 'Show my limits'); b.onclick = () => api.usagePlan(true).then(usageRefresh); box.appendChild(b); return;
   }
-  const head = mk('div', 'u-planhead'); head.append(mk('b', '', 'Plan limits' + (p.plan ? ' · ' + p.plan : '')));
-  const off = mk('button', 'wa-linkbtn', 'Hide'); off.onclick = () => api.usagePlan(false).then(usageRefresh); head.appendChild(off);
-  box.appendChild(head);
-  if (!p.ok) { box.appendChild(mk('div', 'u-foot', p.error)); return; }
-  for (const [label, b] of [['Session limit', p.session], ['Weekly · all models', p.week], ['Weekly · Opus', p.weekOpus]]) {
+  if (!p.ok) {
+    if (p.need === 'signin') {
+      note('Sign in to Claude once to see the limits. You type your password in the Claude window itself; A-tuls only asks for the usage numbers.');
+      const b = mk('button', 'wa-btn', 'Sign in to Claude'); b.onclick = () => { ui('usage: sign in to Claude'); api.usageClaudeLogin(); }; box.appendChild(b);
+    } else note(p.error || 'The limits could not be read');
+    acts(link('Try again', usageRefresh), link('Hide', () => api.usagePlan(false).then(usageRefresh)));
+    return;
+  }
+  for (const [label, b] of [['5-hour limit', p.session], ['Weekly \u00b7 all models', p.week], ['Weekly \u00b7 Opus', p.weekOpus]]) {
     if (!b) continue;
     const row = mk('div', 'u-limit'), top = mk('div', 'u-limtop');
-    top.append(mk('span', '', label), mk('em', '', resetText(b.resetsAt) + '  ' + b.pct + '%'));
-    const bar = mk('div', 'u-bar'), fill = mk('i'); fill.style.width = b.pct + '%'; fill.style.background = b.pct >= 90 ? '#ff453a' : b.pct >= 70 ? '#f5b73c' : '#4a86e8';
+    top.append(mk('span', '', label), mk('em', '', resetText(b.resetsAt) + '   ' + b.pct + '%'));
+    const bar = mk('div', 'u-bar'), fill = mk('i'); fill.style.width = b.pct + '%'; fill.style.background = b.pct >= 90 ? '#ff453a' : b.pct >= 75 ? '#f5b73c' : '#4a86e8';
     bar.appendChild(fill); row.append(top, bar); box.appendChild(row);
   }
+  if (p.credits) {
+    const c = p.credits, row = mk('div', 'u-limit u-credit'), top = mk('div', 'u-limtop');
+    top.append(mk('span', '', 'Cloud session credits'), mk('em', '', '$' + Math.round(c.left * 100) / 100 + ' of $' + Math.round(c.total * 100) / 100 + ' left'));
+    const bar = mk('div', 'u-bar thin'), fill = mk('i'); fill.style.width = Math.max(1, Math.min(100, ((c.total - c.left) / (c.total || 1)) * 100)) + '%'; // the bar shows what was used, like in Claude fill.style.background = '#4a86e8';
+    bar.appendChild(fill); row.append(top, bar);
+    if (c.expiresAt) { const d = new Date(c.expiresAt); row.appendChild(mk('div', 'u-planhint', 'Expires ' + d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', timeZoneName: 'short' }) + ', ' + d.toLocaleDateString([], { month: 'long', day: 'numeric' }))); }
+    box.appendChild(row);
+  }
+  acts(link('Hide', () => api.usagePlan(false).then(usageRefresh)), ...(p.source === 'web' ? [link('Sign out', () => api.usageClaudeOut().then(usageRefresh))] : []));
 }
 function usageRefresh() {
   if (usageBusy) return;
@@ -1330,10 +1354,10 @@ setInterval(() => { if (isOpen && PAGES[pageIdx] === 'usage') usageRefresh(); },
 // ---- the reply field of a message banner: it stays while the pointer is on it or something is typed, and goes a few seconds after
 const replyIn = $('#toast-reply-in');
 const replyRest = (ms) => { clearTimeout(toastTimer); toastTimer = setTimeout(() => { if (document.activeElement === replyIn || replyIn.value.trim()) return; endToast(); }, ms); };
-$('#toast').addEventListener('mouseenter', () => { if (replyToastOn) clearTimeout(toastTimer); });
-$('#toast').addEventListener('mouseleave', () => { if (replyToastOn) replyRest(4000); });
+$('#toast').addEventListener('mouseenter', () => { if (replyToastOn && !alarmCtx) clearTimeout(toastTimer); });
+$('#toast').addEventListener('mouseleave', () => { if (replyToastOn && !alarmCtx) replyRest(Math.min(3000, replyMs)); });
 replyIn.addEventListener('focus', () => { clearTimeout(toastTimer); api.keepOpen(true); });
-replyIn.addEventListener('blur', () => { api.keepOpen(false); if (replyToastOn) replyRest(5000); });
+replyIn.addEventListener('blur', () => { api.keepOpen(false); if (replyToastOn && !alarmCtx) replyRest(Math.min(3000, replyMs)); });
 replyIn.addEventListener('keydown', (e) => { if (e.key === 'Escape') { replyIn.value = ''; replyIn.blur(); endToast(); } });
 $('#toast-reply').addEventListener('submit', (e) => {
   e.preventDefault();

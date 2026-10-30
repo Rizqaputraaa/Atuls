@@ -1,4 +1,4 @@
-const { powerMonitor, app, BrowserWindow, dialog, ipcMain, screen, shell, Tray, Menu, nativeImage, clipboard, ClipboardItem, systemPreferences, safeStorage } = require('electron');
+const { session, powerMonitor, app, BrowserWindow, dialog, ipcMain, screen, shell, Tray, Menu, nativeImage, clipboard, ClipboardItem, systemPreferences, safeStorage } = require('electron');
 const crypto = require('crypto');
 const os = require('os');
 const { spawn } = require('child_process');
@@ -325,7 +325,7 @@ function watchGames() {
     if (game && !last && ++gameSeen < 2) return; // a game must be seen twice in a row (3 s) before the pill hides
     if (!game) gameSeen = 0;
     if (game === last) return;
-    last = game; gameHide = game;
+    last = game; gameHide = game; if (link) link.gameActive = game; // the wheel button, side buttons and the radial menu belong to the game then
     lifecycle.line('pill ' + (game ? 'hidden: a game or full-screen program is in front (state ' + st + ')' : 'shown again'));
     applyPillVisible();
   }, 1500).unref();
@@ -1704,10 +1704,12 @@ app.whenReady().then(() => {
   const lookState = () => {
     let profile = '';
     try { profile = 'data:image/png;base64,' + fs.readFileSync(profileFile()).toString('base64'); } catch {}
-    return { accent: colorOk(store.get('accent', '')) || '#0a84ff', profile, pillPos: store.get('pillPos', 'center'), openMode: store.get('openMode', 'hover') === 'click' ? 'click' : 'hover', navMode: store.get('navMode', 'hover') === 'click' ? 'click' : 'hover' };
+    return { accent: colorOk(store.get('accent', '')) || '#0a84ff', profile, pillPos: store.get('pillPos', 'center'), claudeNotify: store.get('claudeNotify', true) !== false, canClaudeNotify: process.platform === 'win32', waBannerSec: Math.min(60, Math.max(2, Number(store.get('waBannerSec', 5)) || 5)), openMode: store.get('openMode', 'hover') === 'click' ? 'click' : 'hover', navMode: store.get('navMode', 'hover') === 'click' ? 'click' : 'hover' };
   };
   // how the island is shown and how its tab buttons work: 'hover' (the pointer rests on it) or 'click'
   ipcMain.handle('look:set', (_e, key, v) => {
+    if (key === 'claudeNotify') { store.set(key, !!v); lifecycle.line('settings: Claude notifications ' + (v ? 'on' : 'off')); claudeApply(); sendWin('look', lookState()); return lookState(); }
+    if (key === 'waBannerSec') { store.set(key, Math.min(60, Math.max(2, Number(v) || 6))); lifecycle.line('settings: message banner stays ' + store.get(key) + ' s'); sendWin('look', lookState()); return lookState(); }
     if (key !== 'openMode' && key !== 'navMode') return lookState();
     store.set(key, v === 'click' ? 'click' : 'hover');
     lifecycle.line('settings: ' + (key === 'openMode' ? 'island opens on ' : 'tab buttons work on ') + store.get(key));
@@ -1898,14 +1900,19 @@ app.whenReady().then(() => {
     const last = fresh[fresh.length - 1];
     lifecycle.line('whatsapp: ' + fresh.length + ' new message' + (fresh.length > 1 ? 's' : '') + (remote ? ' (from the other computer)' : ''));
     // with a connection the banner has a field to answer in
-    toast(fresh.length > 1 ? `${last.title} (+${fresh.length - 1})` : last.title, last.group && last.from ? `${last.from}: ${last.text}` : last.text, 'ok', { icon: 'chat', reply: waCanReply() && /@/.test(last.chat) ? { chat: last.chat, q: last.q, preview: last.text.slice(0, 100) } : undefined });
+    toast(fresh.length > 1 ? `${last.title} (+${fresh.length - 1})` : last.title, last.group && last.from ? `${last.from}: ${last.text}` : last.text, 'ok', { icon: 'chat', secs: Math.min(60, Math.max(2, Number(store.get('waBannerSec', 5)) || 5)), reply: waCanReply() && /@/.test(last.chat) ? { chat: last.chat, q: last.q, preview: last.text.slice(0, 100) } : undefined });
   };
-  notifier.on('messages', (list, silent) => { if (waOn && waConn.state !== 'open') waAdd(list, { silent }); }); // with a connection the messages come from it, not from the notifications
+  // with a connection the messages come from it; the notifications are then only read for the names they show (the person's own names for the chats)
+  notifier.on('messages', (list, silent) => {
+    if (!waOn) return;
+    if (waConn.state === 'open') { for (const e of list) waConn.learnTitle(e.chat, e.title, e.group); return; }
+    waAdd(list, { silent });
+  });
   waConn.on('messages', (list) => { if (waOn) waAdd(list); });
   waConn.on('problem', (m) => lifecycle.line('whatsapp: ' + m));
   waConn.on('state', () => {
     lifecycle.line('whatsapp connection: ' + waConn.state + (waConn.name ? ' as ' + waConn.name : ''));
-    if (waConn.state === 'open') notifier.stop(); else if (waOn && waConn.state === 'off') notifier.start();
+    if (waOn) notifier.start();
     if (link.sock) link.send({ t: 'wastate', open: waConn.state === 'open' });
     waPush();
   });
@@ -1919,8 +1926,8 @@ app.whenReady().then(() => {
   notifier.on('seen', (id) => store.set('waLastId', id));
   notifier.on('problem', (m) => lifecycle.line('whatsapp notifications could not be read: ' + m));
   link.on('wa', (items, silent) => { if (waOn) waAdd(items, { remote: true, silent }); });
+  if (waOn) notifier.start();
   if (waOn && waConn.hasSession()) waConn.start().catch(() => {}); // linked before: connect again by itself
-  else if (waOn) notifier.start();
   ipcMain.handle('wa:get', () => waState());
   ipcMain.handle('wa:connect', async () => {
     if (!waOn) { waOn = true; store.set('waOn', true); }
@@ -1948,7 +1955,7 @@ app.whenReady().then(() => {
   });
   ipcMain.handle('wa:set', (_e, on) => {
     waOn = !!on; store.set('waOn', waOn);
-    if (waOn) { if (waConn.hasSession() && waConn.state === 'off') waConn.start().catch(() => {}); else if (waConn.state !== 'open') notifier.start(); } else { notifier.stop(); waConn.stop(false); waItems = []; waSave(); } // switching it off also forgets the messages
+    if (waOn) { notifier.start(); if (waConn.hasSession() && waConn.state === 'off') waConn.start().catch(() => {}); } else { notifier.stop(); waConn.stop(false); waItems = []; waSave(); } // switching it off also forgets the messages
     lifecycle.line('whatsapp messages ' + (waOn ? 'on' : 'off'));
     waPush(); return waState();
   });
@@ -1960,11 +1967,54 @@ app.whenReady().then(() => {
     waPush(); return waState();
   });
   ipcMain.handle('wa:clear', () => { waItems = []; waSave(); waPush(); return waState(); });
-  ipcMain.handle('wa:open', () => { shell.openExternal('whatsapp://').catch(() => {}); });
+  ipcMain.handle('wa:open', (_e, jid) => {
+    const j = String(jid || ''), phone = /@s\.whatsapp\.net$/.test(j) ? j.split('@')[0].split(':')[0] : '';
+    shell.openExternal(/^\d{6,}$/.test(phone) ? 'whatsapp://send?phone=' + phone : 'whatsapp://').catch(() => {});
+  });
+
+  // ---- Claude desktop: what it tells the person (it needs a permission, a task is done) is shown under the pill as well. They are the notifications
+  // the Claude app itself makes on Windows; on the computer the person is not at they are passed on to the one they are at.
+  const claudeNotifier = new WaNotifier(store.get('claudeLastId', 0), 'Claude_%!Claude');
+  claudeNotifier.on('seen', (id) => store.set('claudeLastId', id));
+  claudeNotifier.on('messages', (list, silent) => {
+    if (silent || !store.get('claudeNotify', true)) return;
+    const e = list[list.length - 1];
+    lifecycle.line('claude: ' + list.length + ' notification' + (list.length > 1 ? 's' : '') + (link.here() ? ' shown' : ' passed on'));
+    if (link.here()) toast(e.title || 'Claude', e.text || '', 'ok', { icon: 'claude' });
+    else if (link.sock) link.send({ t: 'notice', title: String(e.title || 'Claude').slice(0, 60), text: String(e.text || '').slice(0, 140), kind: 'ok' });
+  });
+  const claudeApply = () => { if (store.get('claudeNotify', true) && claudeNotifier.available()) claudeNotifier.start(); else claudeNotifier.stop(); };
+  claudeApply();
 
   // ---- Usage page: memory of this computer and the AI tokens used today (worked out when the page asks, see usage.js)
-  ipcMain.handle('usage:get', () => usage.get(app.getAppMetrics().reduce((a, p) => a + (p.memory.workingSetSize || 0), 0) / 1024, !!store.get('planOn', false)));
+  // claude.ai is opened in a window of its own with its own storage: the person signs in there once, and A-tuls asks that storage for the usage numbers
+  const claudeSes = () => session.fromPartition('persist:claude-web');
+  const claudeFetch = (url) => claudeSes().fetch(url, { headers: { Accept: 'application/json' } });
+  let claudeWin = null;
+  let loggedKeys = '';
+  ipcMain.handle('usage:get', async () => {
+    const r = await usage.get(app.getAppMetrics().reduce((a, p) => a + (p.memory.workingSetSize || 0), 0) / 1024, !!store.get('planOn', false), claudeFetch);
+    if (r.plan && r.plan.keys && r.plan.keys.join() !== loggedKeys) { loggedKeys = r.plan.keys.join(); lifecycle.line('usage: the limits came with ' + loggedKeys); }
+    return r;
+  });
+  ipcMain.handle('usage:claudeLogin', () => {
+    if (claudeWin && !claudeWin.isDestroyed()) { claudeWin.show(); claudeWin.focus(); return; }
+    claudeWin = new BrowserWindow({ width: 540, height: 760, title: 'Sign in to Claude', autoHideMenuBar: true, backgroundColor: '#1f1e1d', webPreferences: { partition: 'persist:claude-web', contextIsolation: true, sandbox: true } });
+    claudeWin.setMenu(null);
+    claudeWin.webContents.setUserAgent(app.userAgentFallback.replace(/ Electron\/\S+/, '').replace(/ a-tuls\/\S+/i, '')); // a browser like any other (some sign-in pages refuse unknown ones)
+    claudeWin.loadURL('https://claude.ai/login');
+    claudeWin.on('closed', () => { claudeWin = null; usage.resetPlan(); lifecycle.line('usage: the Claude sign-in window was closed'); });
+  });
+  ipcMain.handle('usage:claudeOut', async () => { try { await claudeSes().clearStorageData(); } catch {} usage.resetPlan(); lifecycle.line('usage: signed out of claude.ai'); return true; });
+  ipcMain.handle('usage:openWeb', () => { shell.openExternal('https://claude.ai/settings/usage').catch(() => {}); });
   ipcMain.handle('usage:plan', (_e, on) => { store.set('planOn', !!on); lifecycle.line('usage: Claude plan limits ' + (on ? 'on' : 'off')); return !!on; });
+
+  // ---- Alarms: a banner under the pill that stays, with a sound that comes back every few seconds, until the person answers it with one of its buttons
+  function alarm(id, title, text, icon, actions) { toast(title, text, 'ok', { icon, alarm: { id, actions } }); }
+  ipcMain.handle('alarm:act', (_e, id, key) => {
+    lifecycle.line('alarm ' + id + ': ' + key);
+    if (id === 'water') { if (key === 'drank') water.drink(); else water.snooze(10); waterSave(); }
+  });
 
   // ---- Water page: a reminder every so many minutes (see water.js). When the person drank and when the last reminder came is the same on both
   // computers; the settings are not. The reminder is shown on the computer where the person is.
@@ -1975,7 +2025,7 @@ app.whenReady().then(() => {
   ipcMain.handle('water:drink', () => { water.drink(); lifecycle.line('water: drank, next reminder in ' + water.cfg.every + ' min'); waterSave(); return water.status(); });
   ipcMain.handle('water:set', (_e, patch) => { water.set(patch); lifecycle.line('settings: water reminder ' + (water.cfg.on ? 'every ' + water.cfg.every + ' min' : 'off')); waterSave(); return water.status(); });
   ipcMain.handle('water:snooze', (_e, min) => { water.snooze(min); waterSave(); return water.status(); });
-  ipcMain.handle('water:test', () => { toast('Time to drink water', 'Drink a glass of water', 'ok', { icon: 'water' }); });
+  ipcMain.handle('water:test', () => { alarm('water', 'Time to drink water', 'Drink a glass of water', 'water', [{ key: 'drank', label: 'I drank', primary: true }, { key: 'snooze', label: 'Snooze 10 min' }]); });
   link.on('water', (w) => { if (water.adopt(w)) { store.set('water', water.toJSON()); waterPush(); } });
   let waterLinked = false;
   link.on('status', (s) => { if (s.connected && !waterLinked && link.sock) link.send({ t: 'water', w: water.toJSON() }); waterLinked = !!s.connected; }); // the newer copy wins on both sides
@@ -1984,7 +2034,7 @@ app.whenReady().then(() => {
       if (!water.due() || !link.here()) return;
       water.ring(); waterSave();
       lifecycle.line('water: reminder ' + water.nag);
-      toast('Time to drink water', 'Drink a glass of water', 'ok', { icon: 'water' });
+      alarm('water', 'Time to drink water', 'Drink a glass of water', 'water', [{ key: 'drank', label: 'I drank', primary: true }, { key: 'snooze', label: 'Snooze 10 min' }]);
     } catch (e) { console.error('[island] water tick failed:', e.message); }
   };
   setInterval(waterTick, 15000).unref();

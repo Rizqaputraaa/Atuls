@@ -39,8 +39,9 @@ function parseToast(xml, tag, arrivedAt, rowId) {
 }
 
 class WaNotifier extends EventEmitter {
-  constructor(lastId = 0) {
+  constructor(lastId = 0, like = '%WhatsApp%') {
     super();
+    this.like = like; // the part of the app's id (SQL LIKE) whose notifications are read
     this.file = process.platform === 'win32' && process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, 'Microsoft', 'Windows', 'Notifications', 'wpndatabase.db') : '';
     this.lastId = Number(lastId) || 0;
     this.sig = '';
@@ -68,7 +69,7 @@ class WaNotifier extends EventEmitter {
       const sig = [this.file, this.file + '-wal'].map((f) => { try { const s = fs.statSync(f); return s.mtimeMs + ':' + s.size; } catch { return '-'; } }).join('|');
       if (sig === this.sig) return;
       db = new DatabaseSync(this.file, { readOnly: true });
-      const handlers = db.prepare("select RecordId from NotificationHandler where PrimaryId like '%WhatsApp%'").all().map((r) => Number(r.RecordId));
+      const handlers = db.prepare('select RecordId from NotificationHandler where PrimaryId like ?').all(this.like).map((r) => Number(r.RecordId));
       if (!handlers.length) { this.sig = sig; return; }
       const rows = db.prepare(`select Id, Tag, Payload, (ArrivalTime / 10000 - ${FILETIME_TO_MS}) as ms from Notification where Type = 'toast' and Id > ? and HandlerId in (${handlers.join(',')}) order by Id limit 200`).all(this.lastId);
       this.sig = sig;

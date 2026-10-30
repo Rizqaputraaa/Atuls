@@ -154,29 +154,61 @@ async function readLogin() {
   } catch { return null; }
 }
 const bar = (b) => (b && Number.isFinite(Number(b.utilization)) ? { pct: Math.max(0, Math.min(100, Math.round(Number(b.utilization)))), resetsAt: b.resets_at ? Date.parse(b.resets_at) || 0 : 0 } : null);
-function parsePlan(j, kind) {
-  return { enabled: true, ok: true, plan: kind ? String(kind).replace(/^./, (c) => c.toUpperCase()) : '', session: bar(j && j.five_hour), week: bar(j && j.seven_day), weekOpus: bar(j && j.seven_day_opus) };
+// the credits of cloud sessions: an object with a name that has "credit" in it and an amount left and a total (in cents or in dollars)
+function credits(j) {
+  for (const [k, v] of Object.entries(j || {})) {
+    if (!/credit/i.test(k) || !v || typeof v !== 'object') continue;
+    const pick = (names) => { for (const n of names) { if (Number.isFinite(Number(v[n])) && v[n] !== null) return { v: Number(v[n]), cents: /cents/.test(n) }; } return null; };
+    const left = pick(['remaining_cents', 'remaining', 'available_cents', 'available', 'balance_cents', 'balance']);
+    const total = pick(['total_cents', 'total', 'limit_cents', 'limit', 'granted_cents', 'granted', 'initial_cents', 'initial']);
+    if (!left || !total) continue;
+    const div = (x) => (x.cents ? x.v / 100 : x.v);
+    const exp = v.expires_at || v.expiry || v.expires;
+    return { left: div(left), total: div(total), expiresAt: exp ? Date.parse(exp) || 0 : 0 };
+  }
+  return null;
 }
-async function plan(enabled) {
+function parsePlan(j, kind) {
+  return { enabled: true, ok: true, plan: kind ? String(kind).replace(/^./, (c) => c.toUpperCase()) : '', session: bar(j && j.five_hour), week: bar(j && j.seven_day), weekOpus: bar(j && j.seven_day_opus), credits: credits(j), keys: Object.keys(j || {}).slice(0, 20) };
+}
+// the same numbers from claude.ai itself, with the person's own sign-in (a window of A-tuls that keeps it in its own storage)
+async function webPlan(webFetch) {
+  try {
+    const orgsRes = await webFetch('https://claude.ai/api/organizations');
+    const json = (orgsRes.headers.get('content-type') || '').includes('json');
+    if (!json || orgsRes.status === 401 || orgsRes.status === 403) return json ? { enabled: true, ok: false, need: 'signin' } : { enabled: true, ok: false, error: 'claude.ai did not give the numbers (' + orgsRes.status + ')' };
+    if (!orgsRes.ok) return { enabled: true, ok: false, error: 'claude.ai did not answer (' + orgsRes.status + ')' };
+    const orgs = await orgsRes.json();
+    const org = Array.isArray(orgs) ? orgs.find((o) => (o.capabilities || []).includes('chat')) || orgs[0] : null;
+    if (!org || !org.uuid) return { enabled: true, ok: false, need: 'signin' };
+    const res = await webFetch('https://claude.ai/api/organizations/' + org.uuid + '/usage');
+    if (!res.ok) return { enabled: true, ok: false, error: 'The usage numbers were not available (' + res.status + ')' };
+    const caps = org.capabilities || [];
+    const kind = caps.includes('claude_max') ? 'max' : caps.includes('claude_pro') ? 'pro' : caps.includes('raven') ? 'team' : '';
+    return { ...parsePlan(await res.json(), kind), source: 'web' };
+  } catch (e) { return { enabled: true, ok: false, error: 'claude.ai could not be reached' }; }
+}
+async function plan(enabled, webFetch) {
   if (!enabled) return { enabled: false };
   if (planCache.data && Date.now() - planCache.at < 60000) return planCache.data;
   let data;
   const login = await readLogin();
-  if (!login || !login.accessToken) data = { enabled: true, ok: false, error: 'No Claude Code login file here. The Claude desktop app keeps its login private, so A-tuls cannot read it: sign in once with the Claude Code command line (claude, then /login).' };
-  else if (login.expiresAt && Number(login.expiresAt) < Date.now()) data = { enabled: true, ok: false, error: 'The Claude login has expired: open Claude Code once to renew it' };
-  else {
+  if (login && login.accessToken && !(login.expiresAt && Number(login.expiresAt) < Date.now())) {
     try {
       const res = await fetch('https://api.anthropic.com/api/oauth/usage', { headers: { Authorization: 'Bearer ' + login.accessToken, 'anthropic-beta': 'oauth-2025-04-20', 'User-Agent': 'A-tuls' }, signal: AbortSignal.timeout(8000) });
-      data = res.ok ? parsePlan(await res.json(), login.subscriptionType) : { enabled: true, ok: false, error: 'Anthropic did not answer (' + res.status + ')' };
-    } catch (e) { data = { enabled: true, ok: false, error: 'Anthropic could not be reached' }; }
+      if (res.ok) data = { ...parsePlan(await res.json(), login.subscriptionType), source: 'cli' };
+    } catch { /* the sign-in of claude.ai is tried next */ }
   }
+  if (!data && webFetch) data = await webPlan(webFetch);
+  if (!data) data = { enabled: true, ok: false, need: 'signin' };
   planCache = { at: Date.now(), data };
   return data;
 }
+const resetPlan = () => { planCache = { at: 0, data: null }; };
 
-async function get(appMb, planOn) {
-  const [r, ai, pl] = await Promise.all([ram(appMb), tokens(), plan(planOn)]);
-  return { ram: r, ai, plan: pl };
+async function get(appMb, planOn, webFetch) {
+  const [r, pl] = await Promise.all([ram(appMb), plan(planOn, webFetch)]);
+  return { ram: r, plan: pl };
 }
 
-module.exports = { get, readLine, perDay, seen, parsePlan };
+module.exports = { get, readLine, perDay, seen, parsePlan, resetPlan };

@@ -646,3 +646,41 @@ body.darwin.pr { justify-content: flex-start; } /* the pill stays where it is wh
 .u-limtop { display: flex; justify-content: space-between; gap: 8px; font-size: 11px; }
 .u-limtop em { font-style: normal; color: var(--dim); white-space: nowrap; }
 .u-days { height: 46px; }
+
+/* a chat: last message only, ticks for your own, a bar under it with the reply field and the open button */
+.wa-tick { display: inline-flex; vertical-align: -2px; margin-right: 4px; }
+.wa-tick svg { width: 16px; height: 16px; fill: none; stroke: #53bdeb; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+.wa-bar { display: none; gap: 6px; align-items: center; margin-top: 8px; }
+.wa-row.open .wa-bar { display: flex; }
+.wa-bar .wa-reply { display: flex; flex: 1; min-width: 0; margin: 0; }
+.wa-openchat { flex: none; width: 32px; height: 32px; border: 0; border-radius: 9px; background: #2c2c2e; color: var(--fg); display: flex; align-items: center; justify-content: center; cursor: pointer; }
+.wa-openchat:hover { background: #3a3a3c; }
+.wa-openchat svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+.wa-row .wa-reply { display: flex; }
+
+/* the plan limits, like the panel in Claude itself */
+#u-ai.plan { grid-column: 2; }
+.plan .u-head b { font-size: 14px; color: var(--dim); font-weight: 500; }
+.plan .u-planhint { color: var(--dim); font-size: 12px; line-height: 1.5; }
+.plan .u-limit { gap: 6px; margin-bottom: 4px; }
+.plan .u-limtop { font-size: 14px; }
+.plan .u-bar { height: 7px; border-radius: 4px; }
+.plan .u-planacts { display: flex; gap: 14px; }
+.plan .wa-btn { align-self: flex-start; }
+.plan .u-head { justify-content: space-between; align-items: center; }
+.plan .u-limtop span { white-space: nowrap; }
+.plan .u-limtop { font-size: 13px; gap: 10px; }
+.plan .u-limtop em { font-size: 12px; }
+
+.plan .u-credit { margin-top: 6px; }
+.plan .u-bar.thin { height: 4px; }
+
+/* the alarm banner (water reminder) */
+
+#toast-actions { display: none; }
+#toast.alarm #toast-actions:not([hidden]) { display: flex; flex: 0 0 100%; gap: 8px; }
+#toast-actions button { flex: 1; padding: 8px 12px; border: 0; border-radius: 10px; background: #2c2c2e; color: #fff; font-weight: 600; cursor: pointer; }
+#toast-actions button:hover { background: #3a3a3c; }
+#toast-actions button.main { background: #0a84ff; }
+#toast-actions button.main:hover { background: #3d9bff; }
+#toast.alarm #toast-icon { animation: ctlpulse 1.2s ease-in-out infinite; }

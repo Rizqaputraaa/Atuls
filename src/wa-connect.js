@@ -20,6 +20,7 @@ class WaConnect extends EventEmitter {
     this.qr = ''; this.name = '';
     this.sock = null; this.B = null; this.wanted = false; this.retry = 0; this.timer = null; this.qrTimer = null; this.saveTimer = null;
     this.groups = new Map(); // group jid -> its name
+    this.contacts = new Map(); // jid -> the name the person gave this contact in the phone (what WhatsApp itself shows)
     this.me = new Set(); // the normalised ids this account is known by (phone number id and "lid")
     this.data = null;
   }
@@ -45,6 +46,9 @@ class WaConnect extends EventEmitter {
       clearTimeout(this.saveTimer);
       if (now === true) write(); else this.saveTimer = setTimeout(write, 1500);
     };
+    d.contacts = d.contacts || {};
+    for (const k of Object.keys(d.contacts)) this.contacts.set(k, d.contacts[k]);
+    this.persist = () => save();
     const keys = {
       get: (type, ids) => {
         const out = {};
@@ -83,6 +87,9 @@ class WaConnect extends EventEmitter {
       sock.ev.on('creds.update', (u) => { if (u) Object.assign(state.creds, u); save(true); }); // (the library hands over only what changed)
       sock.ev.on('connection.update', (u) => this.onUpdate(sock, u).catch(() => {}));
       sock.ev.on('messages.upsert', (m) => this.onMessages(sock, m).catch(() => {}));
+      sock.ev.on('contacts.upsert', (l) => (l || []).forEach((c) => this.learn(c)));
+      sock.ev.on('contacts.update', (l) => (l || []).forEach((c) => this.learn(c)));
+      sock.ev.on('chats.upsert', (l) => (l || []).forEach((c) => { if (!c || !c.id) return; if (c.id.endsWith('@g.us')) { if (c.name) this.groups.set(c.id, c.name); } else this.learn({ id: c.id, name: c.name }); }));
     } catch (e) {
       this.emit('problem', 'WhatsApp could not start: ' + e.message);
       this.sock = null; this.set('off');
@@ -159,6 +166,23 @@ class WaConnect extends EventEmitter {
     return '';
   }
 
+  // the saved name of a contact: from the contact list, from chats, and from the title WhatsApp Desktop showed on a notification of the chat
+  learn(c) {
+    if (!c) return;
+    const name = String(c.name || c.verifiedName || '').trim();
+    if (!name || /^[+\d\s-]{6,}$/.test(name)) return; // a bare number is not a name
+    let changed = false;
+    for (const k of [c.id, c.lid, c.phoneNumber, c.jid]) {
+      if (!k) continue;
+      const key = this.norm(k);
+      if (this.contacts.get(key) !== name) { this.contacts.set(key, name); if (this.data) this.data.contacts[key] = name; changed = true; }
+    }
+    if (changed && this.persist) this.persist();
+  }
+  norm(j) { return this.B ? this.B.jidNormalizedUser(j) : String(j).replace(/:\d+@/, '@'); }
+  nameFor(...jids) { for (const j of jids) { if (!j) continue; const n = this.contacts.get(this.norm(j)); if (n) return n; } return ''; }
+  learnTitle(chat, title, group) { if (!chat || !title) return; if (group) this.groups.set(chat, title); else this.learn({ id: chat, name: title }); }
+
   async onMessages(sock, { messages, type }) {
     if (sock !== this.sock || type !== 'notify') return;
     const B = this.B, out = [];
@@ -178,7 +202,8 @@ class WaConnect extends EventEmitter {
           tagged = (ctx.mentionedJid || []).some((j) => this.me.has(norm(j))) || (!!ctx.participant && this.me.has(norm(ctx.participant))); // tagged, or an answer to a message of this account
           if (!tagged) continue; // in a group only what is meant for this person
         }
-        const sender = m.pushName || digitsOf(group ? (m.key.participant || m.participant) : jid);
+        const senderJid = group ? (m.key.participant || m.participant) : jid;
+        const sender = this.nameFor(senderJid, group ? m.key.participantAlt : m.key.remoteJidAlt) || m.pushName || digitsOf(senderJid); // the saved name first, the name the sender chose itself after it
         const title = group ? (await this.groupName(sock, jid)) || 'Group' : sender || 'WhatsApp';
         out.push({ k: m.key.id, chat: jid, title, from: group ? sender : '', text: text.slice(0, 400), at: (Number(m.messageTimestamp) || Math.floor(Date.now() / 1000)) * 1000, group, tagged, q: { id: m.key.id, participant: m.key.participant || '' } });
       } catch { /* a message we cannot read is skipped */ }

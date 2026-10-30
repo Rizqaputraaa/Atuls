@@ -698,7 +698,7 @@ class Link extends EventEmitter {
       const b = BTN[msg];
       if (b && b[0] === 'M' && b[1] === 'down' && this.state === 'idle') { // wheel press on this computer
         const a = this.buttonMap.middle;
-        if (a && a !== 'default') { this.swallowedBtn.add('M'); this.runAction(a, 'middle', 0); return true; }
+        if (a && a !== 'default' && !this.gameBusy()) { this.swallowedBtn.add('M'); this.runAction(a, 'middle', 0); return true; }
       }
       if (b) {
         if (b[1] === 'up') { if (this.swallowedBtn.delete(b[0])) { if (this.fwdBtn.delete(b[0])) this.onLocalButton(false, WBTN[b[0]]); if (b[0] === 'M') this.emit('middle-up'); return true; } }
@@ -793,7 +793,7 @@ class Link extends EventEmitter {
   xHandle(id) {
     const trig = id === 4 ? 'back' : 'forward';
     if (this.state === 'controlling' && this.external) { this.send({ t: 'xbtn', k: trig }); return true; }
-    if (this.state === 'idle') { const a = this.buttonMap[trig]; if (a && a !== 'default') return this.runAction(a, trig, 0); }
+    if (this.state === 'idle' && !this.gameBusy()) { const a = this.buttonMap[trig]; if (a && a !== 'default') return this.runAction(a, trig, 0); }
     return false;
   }
 
@@ -849,7 +849,7 @@ class Link extends EventEmitter {
     }
     if (info.mid) { // the wheel was pressed (mid 1) or released (mid 2) on a mouse connected to this Mac
       const a = this.buttonMap.middle;
-      if (info.mid === 1 && this.state === 'idle' && a && a !== 'default') { this.midSwallowed = true; this.runAction(a, 'middle', 0); return true; }
+      if (info.mid === 1 && this.state === 'idle' && a && a !== 'default' && !this.gameBusy()) { this.midSwallowed = true; this.runAction(a, 'middle', 0); return true; }
       if (info.mid === 2 && this.midSwallowed) { this.midSwallowed = false; this.emit('middle-up'); return true; }
       return false;
     }
@@ -994,6 +994,9 @@ class Link extends EventEmitter {
       } catch { /* ignore */ }
     }, 40);
   }
+
+  // a game is in front (a full-screen program, or a program that hides or confines the pointer): the buttons are the game's
+  gameBusy() { return !!this.gameActive || (!!this.input.freelook && this.inFreelook()); }
 
   // A game (hidden or confined cursor) is in charge of the pointer: never take it over or cross while that lasts.
   inFreelook() {
