@@ -51,6 +51,9 @@ class WheelSmoother {
     }
   }
 
+  // drop what is still pending (the pointer moved on: the rest of the glide would scroll something else)
+  cancel() { this.x = this.y = 0; this.g = null; if (this.timer) { clearInterval(this.timer); this.timer = null; } }
+
   flush() { if (this.x || this.y) { const dx = this.x, dy = this.y; this.x = this.y = 0; try { this.emit(dx, dy); } catch {} } if (this.timer) { clearInterval(this.timer); this.timer = null; } }
 }
 

@@ -25,7 +25,7 @@ if (process.platform !== 'win32' || process.env.ISLAND_INJECT_INLINE) {
   const remote = (op) => (...args) => { try { ensure().send({ op, args }); } catch (e) { console.error('[island] input helper unavailable:', e.message); } };
   module.exports = {
     ...core,
-    press: remote('press'), release: remote('release'), scroll: remote('scroll'), key: remote('key'),
+    moveAbs: remote('moveAbs'), press: remote('press'), release: remote('release'), scroll: remote('scroll'), key: remote('key'),
     releaseAll: remote('releaseAll'), click: remote('click'), screenshot: remote('screenshot'),
     releaseLocalModifiers: remote('releaseLocalModifiers'),
   };

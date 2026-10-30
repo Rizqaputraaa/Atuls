@@ -113,6 +113,7 @@
     <div class="grp">Input</div>
     <button data-p="pointer"><svg viewBox="0 0 24 24"><path d="M5 3l14 7-6 2-2 6z"/></svg>Pointer &amp; switching</button>
     <button data-p="scrolling"><svg viewBox="0 0 24 24"><rect x="7" y="3" width="10" height="18" rx="5"/><path d="M12 7v4"/></svg>Scrolling</button>
+    <button data-p="trackpad"><svg viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="14" rx="3"/><path d="M12 9v6M9 12h6"/></svg>Trackpad scroll</button>
     <button data-p="buttons"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="9"/></svg>Mouse buttons</button>
     <button data-p="shortcuts"><svg viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="12" rx="2.5"/><path d="M7 10h.01M11 10h.01M15 10h.01M8 14h8"/></svg>Keyboard shortcuts</button>
     <div class="grp">Radial menu</div>
@@ -320,6 +321,8 @@ function pagePointer() {
     h('div', { class: 'card' },
       row('Edge resistance', 'How hard you push against the screen edge before the pointer crosses to the other computer.',
         slider(0, 100, 5, P.edgeResistance, '', (v) => { P.edgeResistance = v; savePrefs(); }, (v) => (v === 0 ? 'off' : String(v)))),
+      MACOS ? null : row('Pointer speed', 'How fast the pointer moves on this PC while a Mac steers it (like the DPI of a mouse). 100% is the same distance on screen as on the Mac. It only applies to this computer, and only while the Mac is the one in control.',
+        slider(30, 300, 5, Math.round((P.pointerSpeed || 1) * 100), '%', (v) => { P.pointerSpeed = v / 100; A.pointerSet(v / 100); })),
       row('Game guard', "Don't switch while a game holds the mouse.", toggle(P.freelookGuard, (v) => { P.freelookGuard = v; savePrefs(); }))),
     h('div', { class: 'group' }, 'Look to switch'),
     h('div', { class: 'card' },
@@ -344,6 +347,17 @@ function updateGaze() {
   prev.disabled = !g.enabled || !g.camera; prev.textContent = g.preview ? 'Hide preview' : 'Preview';
 }
 
+// a Mac's trackpad steering this PC (the Mac is the master): how far a swipe scrolls up / down and left / right. Only this PC uses these.
+function pageTrackpad() {
+  const SC = S.scroll, save = () => A.tpScrollSet(SC.tpV || 1, SC.tpH || 1);
+  return [
+    h('h2', {}, 'Trackpad scroll'), h('div', { class: 'sub' }, 'How far a swipe on the trackpad of a Mac scrolls this PC while that Mac is the master. A mouse wheel is set on the Scrolling page.'),
+    h('div', { class: 'card' },
+      row('Up / down speed', 'How far a vertical swipe scrolls. 100% is the usual size.', slider(20, 400, 10, Math.round((SC.tpV || 1) * 100), '%', (v) => { SC.tpV = v / 100; save(); })),
+      row('Left / right speed', 'How far a sideways swipe scrolls.', slider(20, 400, 10, Math.round((SC.tpH || 1) * 100), '%', (v) => { SC.tpH = v / 100; save(); }))),
+    h('div', { style: 'margin-top:12px' }, h('button', { class: 'btn', onclick: async () => { SC.tpV = 1; SC.tpH = 1; await save(); draw(); } }, 'Reset')),
+  ];
+}
 function pageScrolling() {
   const P = S.prefs, SC = S.scroll, T = S.tune;
   return [
@@ -475,6 +489,10 @@ function pageGeneral() {
           h('button', { class: 'btn', onclick: async () => { S.startup = await A.startupSet({ splashColors: { c1: '', c2: '' } }); toast('Back to the default colors'); draw(); } }, 'Reset'))),
       row('Pill position', 'Where the pill sits at the top of this screen. Right keeps it clear of the camera notch (MacBook) and of the browser tabs in the middle.',
         h('div', { class: 'seg' }, ...[['center', 'Center'], ['right', 'Right']].map(([v, l]) => h('button', { class: (((S.look && S.look.pillPos) || 'center') === v) ? 'on' : '', onclick: async () => { S.look = await A.lookPos(v); toast('Saved'); draw(); } }, l)))),
+      row('Show the island', 'Hover: the panel opens when the pointer rests on the pill. Click: it opens when you click the pill, and closes when you click anywhere else.',
+        h('div', { class: 'seg' }, ...[['hover', 'Hover'], ['click', 'Click']].map(([v, l]) => h('button', { class: (((S.look && S.look.openMode) || 'hover') === v) ? 'on' : '', onclick: async () => { S.look = await A.lookSet('openMode', v); toast('Saved'); draw(); } }, l)))),
+      row('Tab buttons', 'The arrows at the left and right of the open island move to the previous and next tab. Hover: resting the pointer on an arrow moves one tab (leave the arrow and come back for the next). Click: press the arrow.',
+        h('div', { class: 'seg' }, ...[['hover', 'Hover'], ['click', 'Click']].map(([v, l]) => h('button', { class: (((S.look && S.look.navMode) || 'hover') === v) ? 'on' : '', onclick: async () => { S.look = await A.lookSet('navMode', v); toast('Saved'); draw(); } }, l)))),
       row('Ignore media from', 'Words in the title, artist or program name of media that must NOT show as music: add instagram or tiktok and scrolling those pages in the browser no longer replaces the song (and its lyrics) that is playing.',
         h('div', { style: 'display:flex;flex-direction:column;gap:8px;align-items:flex-end;max-width:300px' },
           h('div', { style: 'display:flex;gap:8px' },
@@ -554,10 +572,11 @@ function pageCalendar() {
 }
 
 // ---------------------------------------------------------------- shell
-const PAGES = { calendar: pageCalendar, general: pageGeneral, pointer: pagePointer, scrolling: pageScrolling, buttons: pageButtons, shortcuts: pageShortcuts, activation: pageActivation, appearance: pageAppearance, workspaces: pageWorkspaces, color: pageColor, sharing: pageSharing, diagnostics: pageDiagnostics };
+const PAGES = { calendar: pageCalendar, general: pageGeneral, pointer: pagePointer, scrolling: pageScrolling, trackpad: pageTrackpad, buttons: pageButtons, shortcuts: pageShortcuts, activation: pageActivation, appearance: pageAppearance, workspaces: pageWorkspaces, color: pageColor, sharing: pageSharing, diagnostics: pageDiagnostics };
 // Search: every page builds its rows live, so the rows that match are taken from there (with their working controls) and shown together
 let query = '';
 const pageLabels = {};
+if (MACOS) { const tp = document.querySelector('aside button[data-p="trackpad"]'); if (tp) tp.remove(); } // the trackpad of a Mac steers a PC: the page is for the PC
 document.querySelectorAll('aside button[data-p]').forEach((b) => { pageLabels[b.dataset.p] = b.textContent.trim(); });
 const goPage = (p) => { query = ''; $q.value = ''; page = p; A.log('settings page -> ' + page); $main.scrollTop = 0; draw(); };
 function searchResults() {

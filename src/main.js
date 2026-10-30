@@ -12,6 +12,10 @@ const HK = require('./hotkeys');
 const KEY_NAMES = Object.keys(require('uiohook-napi').UiohookKey);
 const { Calibrator, ZoneTracker } = require('./gaze');
 const { keyboard, Key } = require('@nut-tree-fork/nut-js');
+const { WaNotifier } = require('./notify');
+const { Water } = require('./water');
+const { WaConnect } = require('./wa-connect');
+const usage = require('./usage');
 // which data folder this run uses (and whether another A-tuls is really running): decided before the settings are read
 const instance = require('./instance').claim(app);
 
@@ -37,7 +41,7 @@ const store = (() => {
 // The pairing tokens let another computer drive this one, so on disk they are encrypted with the system's own protection (Windows DPAPI,
 // the macOS Keychain) instead of lying in config.json as plain text. Old plain values are sealed the first time they are read. macOS
 // only does this in the installed app: a development run would ask for Keychain access each time.
-const SECRET_KEYS = new Set(['tokens', 'peers', 'peerTokens', 'calendars']);
+const SECRET_KEYS = new Set(['tokens', 'peers', 'peerTokens', 'calendars', 'waLog']); // (waLog: the WhatsApp messages listed on the island)
 function protectedStore(base) {
   const canSeal = () => { try { return (process.platform === 'win32' || app.isPackaged) && safeStorage.isEncryptionAvailable(); } catch { return false; } };
   const seal = (v) => ({ enc: safeStorage.encryptString(JSON.stringify(v)).toString('base64') });
@@ -160,6 +164,8 @@ const TUNES = {
   shot: [[2400, 0, 0.03, 'square'], [1500, 0.035, 0.07, 'sine']],
   impact: [[95, 0, 0.14, 'sine'], [58, 0.015, 0.2, 'sine'], [1900, 0, 0.012, 'square']],
   start: [[196, 0, 0.7, 'triangle'], [392, 0.02, 0.14], [523, 0.14, 0.14], [659, 0.26, 0.14], [784, 0.38, 0.16], [1047, 0.52, 0.6]],
+  chat: [[1047, 0, 0.07], [1397, 0.08, 0.12]],
+  water: [[784, 0, 0.12], [988, 0.14, 0.12], [1319, 0.28, 0.12], [1568, 0.42, 0.3]],
 };
 function toneFile(kind) {
   const file = path.join(app.getPath('userData'), 'tones', kind + '.wav');
@@ -289,6 +295,16 @@ function pollHover() {
     hoverNow = inside;
     win.webContents.send('hover', inside);
   }, 60);
+}
+
+// "Click" mode (Settings > General > Show the island): the panel opens with a click on the pill instead of when the pointer rests on it. The small pill
+// lets clicks through to the window under it on Windows, so the click is read from the input hook.
+function pillClickCheck(button) {
+  if (button !== 1 || store.get('openMode', 'hover') !== 'click' || !win || win.isDestroyed() || !win.isVisible() || islandSize.h > 100) return;
+  if (link && (link.state === 'controlling' || link.lockedOut())) return;
+  const p = screen.getCursorScreenPoint(), b = win.getBounds();
+  const w = islandSize.w + 8, h = islandSize.h + 8, x0 = pillLeft(islandSize.w) - 4;
+  if (p.x >= x0 && p.x <= x0 + w && p.y >= b.y && p.y <= b.y + h) win.webContents.send('pill-click');
 }
 
 // the pill hides itself in games and full-screen programs (and by hand: tray menu, Ctrl+Alt+H)
@@ -731,7 +747,7 @@ function startInput() {
     console.log('[island] starting input hook');
     input.start({
       move: (x, y) => { lastHookAt = Date.now(); if (!seenMove) { seenMove = true; console.log('[island] receiving mouse events'); } link.onLocalMove(x, y); },
-      down: (b, n) => { if (link.state === 'controlling' || Date.now() < hookLogUntil || (hookDownLog = (hookDownLog || 0) + 1) <= 12) lifecycle.line('mouse button ' + b + ' down seen by the hook, link state ' + link.state); closeIfPinnedOutside(); link.onLocalButton(true, b, n); },
+      down: (b, n) => { if (link.state === 'controlling' || Date.now() < hookLogUntil || (hookDownLog = (hookDownLog || 0) + 1) <= 12) lifecycle.line('mouse button ' + b + ' down seen by the hook, link state ' + link.state); closeIfPinnedOutside(); pillClickCheck(b); link.onLocalButton(true, b, n); },
       up: (b) => { if (link.state === 'controlling' || Date.now() < hookLogUntil || (hookUpLog = (hookUpLog || 0) + 1) <= 12) lifecycle.line('mouse button ' + b + ' up seen by the hook, link state ' + link.state); link.onLocalButton(false, b); },
       wheel: (d, r) => link.onLocalWheel(d, r),
       key: (name, down) => { if (process.platform === 'win32' && link.dupKey && link.dupKey(name + (down ? 'd' : 'u'), 'uio')) return; link.lastHookKey = Date.now(); if (link.state === 'controlled' && (link.hookKeyLog = (link.hookKeyLog || 0) + 1) <= 8) lifecycle.line('hook saw key ' + name + (down ? ' down' : ' up') + ' while controlled'); link.onLocalKey(down, name); },
@@ -756,10 +772,11 @@ const shotDir = () => store.get('shotDir', '');
 const shotOn = () => !!store.get('shotSave', false) && !!shotDir();
 const ownShots = new Set(); // files A-tuls wrote itself (the Mac watcher must not treat them as new screenshots)
 let macShotDir = '', macShotSkipUntil = 0;
+// returns the name of the saved file ('' when nothing was saved); the notice itself is made by the clipboard watcher, once per screenshot
 function saveShot(png, why) {
-  if (!shotOn()) return;
+  if (!shotOn()) return '';
   // macOS already put this picture into the folder (the folder of the system screenshots is the chosen one): no second copy
-  if (macShotSkipUntil > Date.now() && path.resolve(shotDir()) === path.resolve(macShotDir)) { macShotSkipUntil = 0; lifecycle.line('screenshot already in the folder (saved by macOS)'); return; }
+  if (macShotSkipUntil > Date.now() && path.resolve(shotDir()) === path.resolve(macShotDir)) { macShotSkipUntil = 0; lifecycle.line('screenshot already in the folder (saved by macOS)'); return ''; }
   try {
     fs.mkdirSync(shotDir(), { recursive: true });
     const d = new Date(), p = (n) => String(n).padStart(2, '0');
@@ -771,10 +788,9 @@ function saveShot(png, why) {
     fs.writeFileSync(file, jpg ? nativeImage.createFromBuffer(png).toJPEG(92) : png);
     ownShots.add(path.basename(file));
     lifecycle.line('screenshot saved (' + why + '): ' + file);
-    // the notice appears only on the computer where the screenshot was taken (the one in use); a copy saved for a screenshot taken on the other computer is silent
-    if (why === 'taken here') toast('Screenshot saved', path.basename(file), 'ok');
     checkShotLimit();
-  } catch (e) { lifecycle.line('screenshot could not be saved: ' + e.message); }
+    return path.basename(file);
+  } catch (e) { lifecycle.line('screenshot could not be saved: ' + e.message); return ''; }
 }
 
 // Self test of the screenshot folder: a tiny picture is put on the clipboard right after a screenshot is marked, and must appear as a file.
@@ -988,7 +1004,7 @@ async function readClipNow() {
   if (text) return { hash: 't' + crypto.createHash('md5').update(text).digest('hex'), kind: 'text', text };
   return null;
 }
-let clipBusy = false;
+let clipBusy = false, remoteClipUntil = 0;
 function startClipboardSync() {
   setInterval(async () => {
     // the watcher also runs without a link (or with sharing off) while screenshots are being saved to a folder
@@ -999,8 +1015,15 @@ function startClipboardSync() {
       if (!c || c.hash === lastClip) return;
       lastClip = c.hash;
       if (c.kind === 'image' && c.data.length > 30 * 1024 * 1024) return;
-      const shot = c.kind === 'image' && link.shotUntil > Date.now(); // a screenshot just taken on this computer
-      if (shot) { if (shotOn()) saveShot(Buffer.from(c.data, 'base64'), 'taken here'); else toast('Screenshot taken', 'It is in your clipboard', 'ok'); } // always a notice, saved to a folder or not
+      // A picture that arrived from the other computer is never a screenshot taken here (writing it into this clipboard is not a new one).
+      const shot = c.kind === 'image' && link.shotUntil > Date.now() && Date.now() >= remoteClipUntil; // a screenshot just taken on this computer
+      if (shot) {
+        link.shotUntil = 0; // one screenshot, one notice: a clipboard that is re-encoded a moment later does not count again
+        const name = shotOn() ? saveShot(Buffer.from(c.data, 'base64'), 'taken here') : '';
+        // one notice, when the picture is in the clipboard, on the computer the person is at (not on both)
+        lifecycle.line('screenshot in the clipboard' + (name ? ', saved as ' + name : '') + (link.here() ? ', notice shown' : ', no notice: the pointer is not here'));
+        if (link.here()) toast('Screenshot copied', name ? 'Saved as ' + name : 'It is in your clipboard', 'ok'); // on the computer it was taken on (where the pointer is), not on the other one
+      }
       if (!clipOn() || !link.sock) return;
       console.log('[island] clipboard ->', c.kind);
       link.send({ t: 'clip', kind: c.kind, text: c.text, data: c.kind === 'image' ? c.data : undefined, shot });
@@ -1016,6 +1039,8 @@ async function applyRemoteClip(m) {
   try {
     if (m.kind === 'text' && typeof m.text === 'string') await clipboard.writeText(m.text);
     else if (m.kind === 'image' && m.data) {
+      remoteClipUntil = Date.now() + 4000; // what lands in this clipboard now came from the other computer: nothing sent back
+      link.shotUntil = 0;
       if (m.shot && store.get('shotOther', true)) saveShot(Buffer.from(m.data, 'base64'), 'taken on the other computer');
       const blob = new Blob([Buffer.from(m.data, 'base64')], { type: 'image/png' });
       await clipboard.write([new ClipboardItem({ 'image/png': blob })]);
@@ -1380,17 +1405,24 @@ app.whenReady().then(() => {
   pollMedia();
 
   ipcMain.on('ov-wheel', (_e, dx, dy, mode) => link.onOverlayWheel(dx, dy, mode));
-  link.prefs = { edgeResistance: store.get('edgeResistance', 20), freelookGuard: store.get('freelookGuard', true), smoothWheel: store.get('smoothWheel', true) };
+  link.prefs = { edgeResistance: store.get('edgeResistance', 20), freelookGuard: store.get('freelookGuard', true), smoothWheel: store.get('smoothWheel', true), pointerSpeed: Math.min(3, Math.max(0.3, Number(store.get('pointerSpeed', 1)) || 1)) };
+  ipcMain.handle('pointer:set', (_e, v) => { const n = Math.min(3, Math.max(0.3, Number(v) || 1)); link.prefs.pointerSpeed = n; store.set('pointerSpeed', n); lifecycle.line('settings: pointer speed ' + Math.round(n * 100) + '%'); return n; });
   ipcMain.handle('prefs:get', () => link.prefs);
   ipcMain.handle('prefs:set', (_e, edge, guard, smooth) => {
-    link.prefs = { edgeResistance: Math.min(200, Math.max(0, Number(edge) || 0)), freelookGuard: !!guard, smoothWheel: smooth !== false };
+    link.prefs = { edgeResistance: Math.min(200, Math.max(0, Number(edge) || 0)), freelookGuard: !!guard, smoothWheel: smooth !== false, pointerSpeed: link.prefs.pointerSpeed };
     store.set('smoothWheel', link.prefs.smoothWheel);
     store.set('edgeResistance', link.prefs.edgeResistance);
     store.set('freelookGuard', link.prefs.freelookGuard);
     lifecycle.line(`settings: edge resistance ${link.prefs.edgeResistance}, game guard ${link.prefs.freelookGuard}, smooth wheel ${link.prefs.smoothWheel}`);
     syncOutFn(['edgeResistance', 'freelookGuard']);
   });
-  link.scrollSettings = { speed: store.get('scrollSpeed', 1), reverse: store.get('scrollReverse', false) };
+  link.scrollSettings = { speed: store.get('scrollSpeed', 1), reverse: store.get('scrollReverse', false), tpV: store.get('tpScrollV', 1), tpH: store.get('tpScrollH', 1) };
+  ipcMain.handle('tpscroll:set', (_e, v, hz) => {
+    link.scrollSettings.tpV = Math.min(4, Math.max(0.2, Number(v) || 1)); link.scrollSettings.tpH = Math.min(4, Math.max(0.2, Number(hz) || 1));
+    store.set('tpScrollV', link.scrollSettings.tpV); store.set('tpScrollH', link.scrollSettings.tpH);
+    lifecycle.line(`settings: Mac trackpad scroll up/down ${Math.round(link.scrollSettings.tpV * 100)}%, left/right ${Math.round(link.scrollSettings.tpH * 100)}%`);
+    return link.scrollSettings;
+  });
   ipcMain.handle('scroll:get', () => link.scrollSettings);
   // scroll tuning belongs to this computer only (it is never sent to the other one)
   const { cleanTune } = require('./smooth');
@@ -1434,13 +1466,17 @@ app.whenReady().then(() => {
   ipcMain.handle('tune:get', () => link.scrollTune);
   ipcMain.handle('tune:set', (_e, t) => { link.scrollTune = cleanTune(t); store.set('scrollTune', link.scrollTune); lifecycle.line(`settings: scroll tuning step ${link.scrollTune.step} px, speed ${link.scrollTune.speed}x, duration ${link.scrollTune.duration} ms`); return link.scrollTune; });
   ipcMain.handle('scroll:set', (_e, speed, reverse) => {
-    link.scrollSettings = { speed: Math.min(4, Math.max(0.2, Number(speed) || 1)), reverse: !!reverse };
+    link.scrollSettings = { ...link.scrollSettings, speed: Math.min(4, Math.max(0.2, Number(speed) || 1)), reverse: !!reverse };
     store.set('scrollSpeed', link.scrollSettings.speed);
     store.set('scrollReverse', link.scrollSettings.reverse);
     lifecycle.line(`settings: scroll speed ${Math.round(link.scrollSettings.speed * 100)}%, reverse ${link.scrollSettings.reverse}`);
   });
   ipcMain.on('ov-btn', (_e, down, domBtn, n) => { const b = [1, 3, 2, 4, 5][domBtn]; if (b && link.state === 'controlling') { if (down) lifecycle.line('mouse button ' + b + ' down seen by the overlay'); link.onLocalButton(!!down, b, n || 1); } });
-  ipcMain.on('ov-move', (_e, dx, dy) => link.onRelMove(dx, dy));
+  // Mac: while a button is held (a drag: selecting text, a screenshot region, resizing) the overlay's pointer lock reports no movement, so the movement
+  // comes from a listen-only tap on the real mouse instead; the overlay's own is ignored meanwhile so nothing is counted twice
+  ipcMain.on('ov-move', (_e, dx, dy) => { if (!link.buttonsDown.size) link.onRelMove(dx, dy); });
+  if (MAC) link.tapStats = () => native.macMouse.deltaTapStats();
+  if (MAC) link.on('capture', (on) => { native.macMouse.deltaTap(on, on ? (dx, dy) => { if (link.buttonsDown.size) link.onRelMove(dx, dy); } : null); });
   link.on('lockfail', () => { console.log('[island] pointer lock gave no movement, using cursor tracking instead'); overlay && overlay.webContents.executeJavaScript('document.exitPointerLock && document.exitPointerLock()', true).catch(() => {}); });
   ipcMain.on('ov-lock', (_e, v) => { if (v) { link.relMoves = 0; link.hookMovesLocked = 0; link.relIgnoreUntil = Date.now() + 600; } link.locked = !!v; console.log('[island] pointer lock', v ? 'on' : 'off');
     // The pointer lock can be lost while this Mac controls the other computer (the overlay loses the focus: a notification, another app...). The Mac's
@@ -1481,6 +1517,10 @@ app.whenReady().then(() => {
       else if (c === 'ovclick') { if (overlay && !overlay.isDestroyed()) { for (const t of ['mouseDown', 'mouseUp']) overlay.webContents.sendInputEvent({ type: t, x: 200, y: 200, button: 'left', clickCount: 1 }); lifecycle.line('test: synthetic click sent to the overlay (link state ' + link.state + ')'); } else lifecycle.line('test: no overlay'); }
       else if (c === 'assoctest') { hookLogUntil = Date.now() + 16000; lifecycle.line('test: mouse disconnected from the cursor for 14 s: ' + native.macAssociate(false)); setTimeout(() => lifecycle.line('test: mouse connected again: ' + native.macAssociate(true)), 14000); }
       else if (c === 'radialtest') radial.open('test');
+      else if (c.startsWith('wafake:')) { const [title, text, from] = c.slice(7).split('|'); waAdd([{ k: 'fake_' + Date.now(), chat: 'fake_' + title, title, from: from || '', text: text || '', at: Date.now(), group: !!from }]); lifecycle.line('test: fake WhatsApp message added'); } // development test: a made-up message on the WhatsApp page
+      else if (c === 'wareset') { waItems = []; waSave(); notifier.stop(); notifier.lastId = 0; if (waOn) notifier.start(); waPush(); lifecycle.line('test: WhatsApp list emptied and read again'); } // development test: forget the list and read the notifications again (silently)
+      else if (c === 'toastreply') { toast('Budi', 'Halo, sudah makan belum?', 'ok', { icon: 'chat', reply: { chat: '1@lid', preview: 'Halo' } }); lifecycle.line('test: message banner with a reply field shown'); } // development test: the banner with a field to answer in
+      else if (c === 'waterring') { water.ring(); waterSave(); lifecycle.line('test: water reminder rung'); }
       else if (c === 'reinstallhooks') reinstallInput('test'); // development test: our hooks go above uiohook, like after an unlock
       else if (c.startsWith('settingsjs:')) radial.evalSettings(c.slice(11)).then((r) => lifecycle.line('test: settings says ' + JSON.stringify(r))).catch((e) => lifecycle.line('test: settings failed ' + e.message));
       else if (c === 'wins') lifecycle.line('test: windows ' + BrowserWindow.getAllWindows().map((w) => { const b = w.getBounds(); return (w.webContents.getURL().split('/').pop() || '?') + ' ' + (w.isVisible() ? 'visible' : 'hidden') + (w.isFocused() ? ' focused' : '') + (w.isMinimized() ? ' minimized' : '') + ' ' + b.x + ',' + b.y + ' ' + b.width + 'x' + b.height; }).join(' | '));
@@ -1492,6 +1532,9 @@ app.whenReady().then(() => {
       }
       else if (c === 'dragtest') { // takes control, presses the left button on the other computer, drags 300 px to the right, lets go, gives control back
         (async () => { const sl = (ms) => new Promise((r) => setTimeout(r, ms)); const ok = link.gazeEnter(); lifecycle.line('test: drag enter ' + ok); if (ok !== true) return; await sl(700); link.send({ t: 'down', b: 1, n: 1 }); await sl(200); for (let i = 0; i < 30; i++) { link.queueMove(10, 0); await sl(30); } await sl(300); link.send({ t: 'up', b: 1 }); await sl(400); lifecycle.line('test: drag leave ' + link.gazeLeave()); })();
+      }
+      else if (c === 'holdtest') { // Mac: takes control and drags like a hand does: real button-down and drag events at the frozen cursor, 300 px to the right, then lets go
+        (async () => { const sl = (ms) => new Promise((r) => setTimeout(r, ms)); const ok = link.gazeEnter(); lifecycle.line('test: hold enter ' + ok); if (ok !== true) return; await sl(900); const p = screen.getCursorScreenPoint(); native.macMouse.down(1, p.x, p.y, 1); await sl(250); for (let i = 1; i <= 30; i++) { native.macMouse.move(p.x + i * 10, p.y, 1); await sl(30); } await sl(300); native.macMouse.up(1, p.x + 300, p.y, 1); await sl(500); native.macMouse.move(p.x, p.y, 0); lifecycle.line('test: hold leave ' + link.gazeLeave()); })();
       }
       else if (c === 'procs') { // which window lives in which process, with its CPU and memory (for measuring)
         const wins = Object.fromEntries(BrowserWindow.getAllWindows().map((w) => { try { return [w.webContents.getOSProcessId(), (w.webContents.getURL().split('/').pop() || '?') + (w.isVisible() ? '' : ' (hidden)')]; } catch { return [0, '?']; } }));
@@ -1550,7 +1593,7 @@ app.whenReady().then(() => {
     const ok = (v) => (/^#[0-9a-f]{6}$/i.test(v || '') ? v.toLowerCase() : '');
     store.set('splashColors', { c1: ok(c1), c2: ok(c2), t: Date.now() });
     lifecycle.line('settings: start-up animation colours ' + JSON.stringify(store.get('splashColors')));
-    link.send({ t: 'fxcolors', colors: store.get('splashColors') });
+    if (SYNC_SETTINGS) link.send({ t: 'fxcolors', colors: store.get('splashColors') });
   };
   ipcMain.handle('startup:get', startupState);
   ipcMain.handle('startup:set', (_e, o) => {
@@ -1584,15 +1627,18 @@ app.whenReady().then(() => {
     shotLimitMb: { get: () => store.get('shotLimitMb', 500), set: (v) => { if (Number(v) >= 1) store.set('shotLimitMb', Math.min(100000, Math.round(Number(v)))); } },
     shotOther: { get: () => store.get('shotOther', true), set: (v) => store.set('shotOther', !!v) },
   };
+  // Every setting belongs to the computer it was set on: nothing is copied to the other computer or taken from it (this used to follow the other one).
+  const SYNC_SETTINGS = false;
   const syncOut = (keys) => {
+    if (!SYNC_SETTINGS) return;
     const stamps = store.get('syncStamps', {}), now = Date.now(), items = [];
     for (const k of keys) { if (!SYNC[k]) continue; stamps[k] = now; items.push({ k, v: SYNC[k].get(), t: now }); }
     store.set('syncStamps', stamps);
     if (items.length) link.send({ t: 'sync', items });
   };
-  const syncAll = () => { const stamps = store.get('syncStamps', {}); const items = Object.keys(stamps).filter((k) => SYNC[k]).map((k) => ({ k, v: SYNC[k].get(), t: stamps[k] })); if (items.length) link.send({ t: 'sync', items }); };
+  const syncAll = () => { if (!SYNC_SETTINGS) return; const stamps = store.get('syncStamps', {}); const items = Object.keys(stamps).filter((k) => SYNC[k]).map((k) => ({ k, v: SYNC[k].get(), t: stamps[k] })); if (items.length) link.send({ t: 'sync', items }); };
   link.on('sync', (items) => {
-    if (!Array.isArray(items)) return;
+    if (!SYNC_SETTINGS || !Array.isArray(items)) return;
     const stamps = store.get('syncStamps', {});
     const took = [];
     for (const it of items.slice(0, 20)) {
@@ -1605,7 +1651,7 @@ app.whenReady().then(() => {
   syncOutFn = syncOut;
   syncTest = (k, raw) => { if (!SYNC[k]) return 'unknown key'; const v = raw === 'true' ? true : raw === 'false' ? false : /^d+$/.test(raw) ? Number(raw) : raw; SYNC[k].set(v); syncOut([k]); return 'sent ' + k + '=' + v; };
   link.on('fxcolors', (c) => {
-    if (!c || typeof c !== 'object') return;
+    if (!SYNC_SETTINGS || !c || typeof c !== 'object') return;
     const mine = store.get('splashColors', {});
     const t = Number(c.t) || 0;
     if (!t || t <= (mine.t || 0)) return;
@@ -1613,7 +1659,7 @@ app.whenReady().then(() => {
     lifecycle.line('animation colours taken over from the other computer: ' + JSON.stringify(store.get('splashColors')));
     sendWin('startup', startupState());
   });
-  link.on('layout', () => { const c = store.get('splashColors', null); if (c && (c.c1 || c.c2)) link.send({ t: 'fxcolors', colors: { ...c, t: c.t || 1 } }); });
+  link.on('layout', () => { const c = store.get('splashColors', null); if (SYNC_SETTINGS && c && (c.c1 || c.c2)) link.send({ t: 'fxcolors', colors: { ...c, t: c.t || 1 } }); });
   ipcMain.on('keep-open', (_e, v) => { keepOpen = !!v; });
   ipcMain.on('island-size', (_e, w, h) => { islandSize = { w, h }; if (!MAC && win && !win.isDestroyed()) win.setIgnoreMouseEvents(h <= 40); });
   ipcMain.on('window-size', (_e, w, h) => {
@@ -1658,8 +1704,15 @@ app.whenReady().then(() => {
   const lookState = () => {
     let profile = '';
     try { profile = 'data:image/png;base64,' + fs.readFileSync(profileFile()).toString('base64'); } catch {}
-    return { accent: colorOk(store.get('accent', '')) || '#0a84ff', profile, pillPos: store.get('pillPos', 'center') };
+    return { accent: colorOk(store.get('accent', '')) || '#0a84ff', profile, pillPos: store.get('pillPos', 'center'), openMode: store.get('openMode', 'hover') === 'click' ? 'click' : 'hover', navMode: store.get('navMode', 'hover') === 'click' ? 'click' : 'hover' };
   };
+  // how the island is shown and how its tab buttons work: 'hover' (the pointer rests on it) or 'click'
+  ipcMain.handle('look:set', (_e, key, v) => {
+    if (key !== 'openMode' && key !== 'navMode') return lookState();
+    store.set(key, v === 'click' ? 'click' : 'hover');
+    lifecycle.line('settings: ' + (key === 'openMode' ? 'island opens on ' : 'tab buttons work on ') + store.get(key));
+    sendWin('look', lookState()); return lookState();
+  });
   ipcMain.handle('mediablock:get', () => mediaBlockList());
   ipcMain.handle('mediablock:set', (_e, list) => {
     const clean = [...new Set((Array.isArray(list) ? list : []).map((x) => String(x).trim().toLowerCase().slice(0, 60)).filter(Boolean))].slice(0, 30);
@@ -1799,6 +1852,143 @@ app.whenReady().then(() => {
   link.on('todo', (t) => sendWin('todo', t));
   link.on('mediakey', (k) => { if (['play', 'next', 'prev'].includes(k)) { lifecycle.line('media key ' + k + ' (from the other computer)'); runMediaKey(k); } });
 
+  // ---- WhatsApp page: the messages WhatsApp Desktop shows as Windows notifications are listed on the island (and on the linked computer's) ----
+  const secure = protectedStore(store);
+  const WA_MAX = 200;
+  const notifier = new WaNotifier(store.get('waLastId', 0));
+  let waOn = !!store.get('waOn', false);
+  let waItems = [];
+  try { const l = secure.get('waLog', []); if (Array.isArray(l)) waItems = l.filter((e) => e && typeof e.k === 'string').slice(-WA_MAX); } catch {}
+  // Group messages are listed only when this person is tagged in them: the name(s) or number(s) the person is tagged with ("@Budi", "@62812...")
+  let waNames = (() => { const l = store.get('waNames', []); return Array.isArray(l) ? l.map((x) => String(x).trim().replace(/^@/, '').slice(0, 40)).filter(Boolean).slice(0, 8) : []; })();
+  const digitsCore = (s) => String(s).replace(/\D/g, '').replace(/^(62|0)/, ''); // 0812..., 62812... and +62 812... are the same number
+  const waTagged = (e) => {
+    const t = String(e.text || '').toLowerCase();
+    if (!waNames.length || !t.includes('@')) return false;
+    const tokens = t.split('@').slice(1).map((s) => s.split(/[\s,;:!?]/)[0]); // what follows each @ up to a space or punctuation
+    return waNames.some((n) => {
+      const low = n.toLowerCase(), phone = /^[+\d\s-]{6,}$/.test(n) ? digitsCore(n) : '';
+      if (phone) return tokens.some((tok) => digitsCore(tok).length >= 6 && digitsCore(tok) === phone);
+      return tokens.some((tok) => tok === low) || t.includes('@' + low + ' ') || t.endsWith('@' + low); // a name with spaces in it: look for it as it is
+    });
+  };
+  const waShown = (e) => !e.group || e.tagged || waTagged(e);
+  // the login of the linked WhatsApp (see wa-connect.js) lives in one file, sealed with the system's own protection where there is one
+  const sealOk = () => { try { return (process.platform === 'win32' || app.isPackaged) && safeStorage.isEncryptionAvailable(); } catch { return false; } };
+  const waConn = new WaConnect({
+    dir: app.getPath('userData'),
+    seal: (str) => { try { if (sealOk()) return Buffer.from('S:' + safeStorage.encryptString(str).toString('base64')); } catch {} return Buffer.from('P:' + str); },
+    unseal: (buf) => { const t = buf.toString('utf8'); if (t.startsWith('S:')) return safeStorage.decryptString(Buffer.from(t.slice(2), 'base64')); if (t.startsWith('P:')) return t.slice(2); throw new Error('unknown login file'); },
+  });
+  let waPeerConn = false; // the other computer is connected to WhatsApp (so it can send an answer for this one)
+  const waCanReply = () => waConn.state === 'open' || (waPeerConn && !!link.sock);
+  const waState = () => ({ on: waOn, canRead: notifier.available(), items: waItems, names: waNames, conn: waConn.info(), canReply: waCanReply() });
+  const waPush = () => sendWin('wa', waState());
+  const waSave = () => { try { secure.set('waLog', waItems); } catch {} };
+  const waClean = (e) => ({ k: String(e.k).slice(0, 120), chat: String(e.chat || e.title || '').slice(0, 80), title: String(e.title || '').slice(0, 80), from: String(e.from || '').slice(0, 60), text: String(e.text || '').slice(0, 400), at: Number(e.at) || Date.now(), group: !!e.group, tagged: !!e.tagged, mine: !!e.mine, q: e.q && e.q.id ? { id: String(e.q.id).slice(0, 80), participant: String(e.q.participant || '').slice(0, 80) } : undefined });
+  // new messages: kept, shown on the page, passed on to the linked computer and (when the person is here) announced under the pill
+  const waAdd = (list, { remote = false, silent = false } = {}) => {
+    const have = new Set(waItems.map((e) => e.k));
+    const fresh = list.filter((e) => e && typeof e.k === 'string' && e.k && !have.has(e.k) && (remote || waShown(e))).map(waClean);
+    if (!fresh.length) return;
+    waItems = waItems.concat(fresh).sort((a, b) => a.at - b.at).slice(-WA_MAX);
+    waSave(); waPush();
+    if (!remote && link.sock) link.send({ t: 'wa', items: fresh, silent });
+    if (silent || !link.here()) return;
+    const last = fresh[fresh.length - 1];
+    lifecycle.line('whatsapp: ' + fresh.length + ' new message' + (fresh.length > 1 ? 's' : '') + (remote ? ' (from the other computer)' : ''));
+    // with a connection the banner has a field to answer in
+    toast(fresh.length > 1 ? `${last.title} (+${fresh.length - 1})` : last.title, last.group && last.from ? `${last.from}: ${last.text}` : last.text, 'ok', { icon: 'chat', reply: waCanReply() && /@/.test(last.chat) ? { chat: last.chat, q: last.q, preview: last.text.slice(0, 100) } : undefined });
+  };
+  notifier.on('messages', (list, silent) => { if (waOn && waConn.state !== 'open') waAdd(list, { silent }); }); // with a connection the messages come from it, not from the notifications
+  waConn.on('messages', (list) => { if (waOn) waAdd(list); });
+  waConn.on('problem', (m) => lifecycle.line('whatsapp: ' + m));
+  waConn.on('state', () => {
+    lifecycle.line('whatsapp connection: ' + waConn.state + (waConn.name ? ' as ' + waConn.name : ''));
+    if (waConn.state === 'open') notifier.stop(); else if (waOn && waConn.state === 'off') notifier.start();
+    if (link.sock) link.send({ t: 'wastate', open: waConn.state === 'open' });
+    waPush();
+  });
+  link.on('wastate', (open) => { waPeerConn = !!open; waPush(); });
+  link.on('status', (st) => { if (st.connected && waConn.state === 'open') link.send({ t: 'wastate', open: true }); if (!st.connected) { waPeerConn = false; waPush(); } });
+  // an answer typed on the other computer, which has no connection of its own: it is sent from here
+  link.on('wareply', async (m) => {
+    try { await waConn.send(String(m.jid), String(m.text), m.q); link.send({ t: 'wareplied', ok: true, jid: m.jid }); } catch (e) { link.send({ t: 'wareplied', ok: false, error: String(e.message).slice(0, 80) }); }
+  });
+  link.on('wareplied', (m) => { if (!m.ok) toast('Reply not sent', m.error || 'WhatsApp is not connected', 'err'); });
+  notifier.on('seen', (id) => store.set('waLastId', id));
+  notifier.on('problem', (m) => lifecycle.line('whatsapp notifications could not be read: ' + m));
+  link.on('wa', (items, silent) => { if (waOn) waAdd(items, { remote: true, silent }); });
+  if (waOn && waConn.hasSession()) waConn.start().catch(() => {}); // linked before: connect again by itself
+  else if (waOn) notifier.start();
+  ipcMain.handle('wa:get', () => waState());
+  ipcMain.handle('wa:connect', async () => {
+    if (!waOn) { waOn = true; store.set('waOn', true); }
+    lifecycle.line('whatsapp: connecting (QR)');
+    waConn.start().catch(() => {});
+    waPush(); return waState();
+  });
+  ipcMain.handle('wa:disconnect', async () => { lifecycle.line('whatsapp: unlinking'); await waConn.logout(); if (waOn) notifier.start(); waPush(); return waState(); });
+  ipcMain.handle('wa:cancel', async () => { await waConn.stop(false); waPush(); return waState(); });
+  // answer a chat: sent here when this computer is connected, else by the other computer
+  ipcMain.handle('wa:reply', async (_e, jid, text, q) => {
+    jid = String(jid || ''); text = String(text || '').trim().slice(0, 2000);
+    if (!/@/.test(jid) || !text) return { ok: false, error: 'Nothing to send' };
+    try {
+      if (waConn.state === 'open') {
+        await waConn.send(jid, text, q);
+        const known = waItems.find((e) => e.chat === jid);
+        waAdd([{ k: 'me_' + Date.now(), chat: jid, title: known ? known.title : jid.split('@')[0], from: 'You', text, at: Date.now(), group: jid.endsWith('@g.us'), tagged: true, mine: true }], { silent: true });
+        lifecycle.line('whatsapp: reply sent');
+        return { ok: true };
+      }
+      if (waPeerConn && link.sock) { link.send({ t: 'wareply', jid, text, q }); lifecycle.line('whatsapp: reply passed to the other computer'); return { ok: true, via: 'peer' }; }
+      return { ok: false, error: 'WhatsApp is not connected' };
+    } catch (e) { lifecycle.line('whatsapp: reply failed: ' + e.message); return { ok: false, error: String(e.message).slice(0, 80) }; }
+  });
+  ipcMain.handle('wa:set', (_e, on) => {
+    waOn = !!on; store.set('waOn', waOn);
+    if (waOn) { if (waConn.hasSession() && waConn.state === 'off') waConn.start().catch(() => {}); else if (waConn.state !== 'open') notifier.start(); } else { notifier.stop(); waConn.stop(false); waItems = []; waSave(); } // switching it off also forgets the messages
+    lifecycle.line('whatsapp messages ' + (waOn ? 'on' : 'off'));
+    waPush(); return waState();
+  });
+  ipcMain.handle('wa:names', (_e, list) => {
+    waNames = (Array.isArray(list) ? list : String(list || '').split(',')).map((x) => String(x).trim().replace(/^@/, '').slice(0, 40)).filter(Boolean).slice(0, 8);
+    store.set('waNames', waNames);
+    if (notifier.available()) { waItems = waItems.filter(waShown); waSave(); } // here the messages are read: group messages that are not about this person (any more) are removed
+    lifecycle.line('whatsapp: ' + waNames.length + ' name(s) for tags');
+    waPush(); return waState();
+  });
+  ipcMain.handle('wa:clear', () => { waItems = []; waSave(); waPush(); return waState(); });
+  ipcMain.handle('wa:open', () => { shell.openExternal('whatsapp://').catch(() => {}); });
+
+  // ---- Usage page: memory of this computer and the AI tokens used today (worked out when the page asks, see usage.js)
+  ipcMain.handle('usage:get', () => usage.get(app.getAppMetrics().reduce((a, p) => a + (p.memory.workingSetSize || 0), 0) / 1024, !!store.get('planOn', false)));
+  ipcMain.handle('usage:plan', (_e, on) => { store.set('planOn', !!on); lifecycle.line('usage: Claude plan limits ' + (on ? 'on' : 'off')); return !!on; });
+
+  // ---- Water page: a reminder every so many minutes (see water.js). When the person drank and when the last reminder came is the same on both
+  // computers; the settings are not. The reminder is shown on the computer where the person is.
+  const water = new Water(store.get('water', null));
+  const waterPush = () => sendWin('water', water.status());
+  const waterSave = (share = true) => { store.set('water', water.toJSON()); if (share && link.sock) link.send({ t: 'water', w: water.toJSON() }); waterPush(); };
+  ipcMain.handle('water:get', () => water.status());
+  ipcMain.handle('water:drink', () => { water.drink(); lifecycle.line('water: drank, next reminder in ' + water.cfg.every + ' min'); waterSave(); return water.status(); });
+  ipcMain.handle('water:set', (_e, patch) => { water.set(patch); lifecycle.line('settings: water reminder ' + (water.cfg.on ? 'every ' + water.cfg.every + ' min' : 'off')); waterSave(); return water.status(); });
+  ipcMain.handle('water:snooze', (_e, min) => { water.snooze(min); waterSave(); return water.status(); });
+  ipcMain.handle('water:test', () => { toast('Time to drink water', 'Drink a glass of water', 'ok', { icon: 'water' }); });
+  link.on('water', (w) => { if (water.adopt(w)) { store.set('water', water.toJSON()); waterPush(); } });
+  let waterLinked = false;
+  link.on('status', (s) => { if (s.connected && !waterLinked && link.sock) link.send({ t: 'water', w: water.toJSON() }); waterLinked = !!s.connected; }); // the newer copy wins on both sides
+  const waterTick = () => {
+    try {
+      if (!water.due() || !link.here()) return;
+      water.ring(); waterSave();
+      lifecycle.line('water: reminder ' + water.nag);
+      toast('Time to drink water', 'Drink a glass of water', 'ok', { icon: 'water' });
+    } catch (e) { console.error('[island] water tick failed:', e.message); }
+  };
+  setInterval(waterTick, 15000).unref();
+
   createTray();
 });
 
@@ -1824,7 +2014,7 @@ async function selfTest() {
     w.destroy();
   } catch (e) { L('settings window FAILED: ' + e.message); }
   try {
-    const ids = ['island', 'panel', 'tab-media', 'tab-tray', 'tab-link', 'gear', 'avatar', 'top-mixer', 'lyr-list', 'todo-list', 'cal-week', 'dots', 'peer-side', 'nearby', 'files', 'send'];
+    const ids = ['island', 'panel', 'tab-media', 'tab-chat', 'tab-water', 'tab-usage', 'tab-tray', 'tab-link', 'wa-list', 'water-ring', 'gear', 'avatar', 'top-mixer', 'lyr-list', 'todo-list', 'cal-week', 'dots', 'peer-side', 'nearby', 'files', 'send'];
     const missing = await win.webContents.executeJavaScript(`${JSON.stringify(ids)}.filter((i) => !document.getElementById(i))`);
     L(missing.length ? 'island page missing elements: ' + missing.join(', ') : 'island page: all key elements present');
   } catch (e) { L('island page check FAILED: ' + e.message); }

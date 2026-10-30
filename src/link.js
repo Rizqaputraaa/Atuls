@@ -37,6 +37,9 @@ const randomPin = () => String(crypto.randomInt(100000, 1000000));
 // Shares this computer's pointer with one paired peer. Whichever machine the
 // cursor is on is the "controller"; crossing the configured screen edge hands
 // control to the other machine.
+// pixels of a Mac trackpad swipe -> the size of the same scroll on a Windows PC (the slider in Settings > Scrolling scales it further)
+const TRACKPAD_TO_WHEEL = 0.5;
+
 class Link extends EventEmitter {
   constructor({ input, getDisplays, store, downloadDir, diag, port }) {
     super();
@@ -110,6 +113,9 @@ class Link extends EventEmitter {
     this.pushDist = 0;
     this.edgeEvents = 0;
     this.buttonsDown = new Set();
+    this.remoteHeld = new Set(); // buttons the other computer holds down on this one (a drag under way): the pointer must not leave through an edge meanwhile
+    this.remoteHeldAt = 0;
+    this.txMoves = 0;
     this.freelookAt = 0;
     this.freelookVal = false;
     this.ctrlMpp = 0; // millimetres per pixel on the computer that is controlling this one
@@ -131,12 +137,15 @@ class Link extends EventEmitter {
     this._state = v;
     if (prev === v) return;
     this.d('state', { from: prev, to: v });
+    // what was still gliding or waiting to be sent belongs to the place the pointer has just left
+    try { this.localSmooth.cancel(); this.remoteSmooth.cancel(); } catch {}
+    this.scrollX = this.scrollY = 0;
     if (v === 'controlling') this.owner = 'peer';
     else if (v === 'controlled') this.owner = 'me';
     if (v === 'controlling') { this.ignoreButtonsUntil = Date.now() + 150; this.awaitAnchor = Date.now() + 400; this.emit('capture', true); }
     else if (prev === 'controlling') this.emit('capture', false);
     if (prev === 'controlled') this.input.releaseAll();
-    if (prev === 'controlled') { this.rMods.clear(); this.hotSwallow.clear(); }
+    if (prev === 'controlled') { this.rMods.clear(); this.hotSwallow.clear(); this.remoteHeld.clear(); }
     // this computer's screen became the active one (the pointer arrived, or came back): the screen-edge effect listens to this
     if (this.peer && (v === 'controlled' || (v === 'idle' && prev === 'controlling'))) this.emitSwitch(v, prev);
   }
@@ -702,6 +711,7 @@ class Link extends EventEmitter {
       }
       if (msg === 0x20B || msg === 0x20C) return this.onXButton(msg, i);
     }
+    if (msg === 0x200 && !injected && this.localSmooth.timer && this.lwAt && Math.hypot(i.x - this.lwAt.x, i.y - this.lwAt.y) > 25) { this.localSmooth.cancel(); this.dc('scroll.glide.cancel'); } // the pointer went somewhere else: the rest of the glide is dropped
     if (this.state === 'idle' && !injected && msg === 0x200) this.trackPush(i.x, i.y);
     if (this.state === 'idle' && this.owner === 'peer' && !injected && msg === 0x200 && this.sock && this.peer && Date.now() >= this.cooldownUntil && !this.inFreelook()) {
       if (this.beginAttach()) return true;
@@ -723,7 +733,7 @@ class Link extends EventEmitter {
     if (msg === 0x20A && !injected && this.state !== 'controlling' && this.prefs.smoothWheel && this.external) {
       const delta = (i.mouseData >>> 16) << 16 >> 16;
       const held = native.winModsHeld(); // Ctrl+wheel zooms, Shift+wheel goes sideways: those must reach the application untouched
-      if (delta && delta % 120 === 0 && !held) { this.localSmooth.add(0, -delta / 120); this.dc('scroll.smooth'); return true; }
+      if (delta && delta % 120 === 0 && !held) { this.lwAt = { x: i.x, y: i.y }; this.localSmooth.add(0, -delta / 120); this.dc('scroll.smooth'); return true; }
     }
     if (this.state !== 'controlling' || !this.external || injected) return false;
     if (msg === 0x20A || msg === 0x20E) { // wheel: exact smooth deltas straight from the system (120 per notch)
@@ -812,7 +822,7 @@ class Link extends EventEmitter {
     this.lastFlush = Date.now();
     const dx = this.pendX, dy = this.pendY;
     this.pendX = this.pendY = 0;
-    if ((dx || dy) && this.state === 'controlling') { this.send({ t: 'move', dx, dy }); this.dc('moves.tx'); }
+    if ((dx || dy) && this.state === 'controlling') { this.send({ t: 'move', dx, dy }); this.dc('moves.tx'); this.txMoves++; }
   }
 
   // scrolling is sent in pixels (positive = down / right) and batched like movement
@@ -846,6 +856,10 @@ class Link extends EventEmitter {
     if (info.disabled) { this.dc('scroll.tapoff'); return false; } // the system switched the tap off for a moment (too slow)
     if (!info.continuous) this.dc('scroll.wheel'); else this.dc('scroll.pad');
     if (info.ours || this.state === 'controlled' || Date.now() - (this.injectAt || 0) < 60) return false;
+    if (info.continuous) {
+      if (!info.momentum) this.padState = this.state; // the fingers are on the pad: this is where the swipe began
+      else if (this.padState !== this.state) { this.dc('scroll.momentum.dropped'); return true; } // the glide after the swipe belongs to where it began
+    }
     if (this.state === 'controlling') {
       this.lastOverlayWheel = Date.now();
       // a wheel with clicks is sent as whole notches (100 px each) so the other computer can tune it to its own taste
@@ -1041,6 +1055,9 @@ class Link extends EventEmitter {
   typingBusy() { return !!(this.mods && this.mods.size) || Date.now() - (this.lastKeyAt || 0) < 1000; }
   // true while the mouse is being used by hand (moved a moment ago, or a button is held): the head must not take it away then
   mouseBusy() { return Date.now() - (this.lastHandMoveAt || 0) < 350 || this.buttonsDown.size > 0; }
+  // the person is at this computer: the pointer is on its screens (or the other computer is steering it); on its own it is always here.
+  // Reminders and message banners are shown on the computer where the person is, not on both.
+  here() { return !this.sock || this.state === 'controlled' || (this.state === 'idle' && this.owner !== 'peer'); }
 
   gazeEnter() {
     if (!this.sock || !this.peer) return false;
@@ -1109,13 +1126,22 @@ class Link extends EventEmitter {
     // the other computer's pixels and ours differ in size: move the same distance on the screen
     const here = L.dispAt(this.myDisplays, this.virt.x, this.virt.y);
     if (this.ctrlMpp && here && here.mpp) { const k = Math.min(3, Math.max(0.33, this.ctrlMpp / here.mpp)); dx *= k; dy *= k; }
+    const ps = this.peerPlat === 'darwin' ? this.prefs.pointerSpeed || 1 : 1; // Settings > Pointer & switching > Pointer speed: only when a Mac is the one that steers this computer
+    if (ps !== 1) { dx *= ps; dy *= ps; }
+    if (this.remoteSmooth.timer && this.rwAt && Math.hypot(this.virt.x - this.rwAt.x, this.virt.y - this.rwAt.y) > 25) { this.remoteSmooth.cancel(); this.dc('scroll.glide.cancel'); } // the other computer moved the pointer on: no more glide here
     let bx = this.virt.x, by = this.virt.y;
-    const cur = this.input.getPos && this.input.getPos();
+    const cur = !this.dragging() && this.input.getPos && this.input.getPos(); // (while dragging the position is not read back: the helper moves it a moment later)
     // if the system put the cursor somewhere else than we asked (wall, notch, Dock...), keep going from where it really is
+    // (only when the same place is read twice in a row: while the system is busy, with a screenshot overlay for example, the position that is read
+    // can lag a few moves behind, and going on from it made the pointer jump back with every move)
     if (cur && this.lastSet && (Math.abs(cur.x - this.lastSet.x) > 2 || Math.abs(cur.y - this.lastSet.y) > 2) && L.dispAt(this.myDisplays, cur.x, cur.y)) {
-      if (Date.now() - (this.fbLogAt || 0) > 330) { this.fbLogAt = Date.now(); this.d('feedback', { asked: { x: this.lastSet.x, y: this.lastSet.y }, got: { x: cur.x, y: cur.y } }); } // the system put the pointer somewhere else than asked
-      bx = cur.x; by = cur.y; this.dc('feedback');
-    }
+      const held = this.fbPrev && Math.abs(cur.x - this.fbPrev.x) <= 1 && Math.abs(cur.y - this.fbPrev.y) <= 1;
+      this.fbPrev = { x: cur.x, y: cur.y };
+      if (held) {
+        if (Date.now() - (this.fbLogAt || 0) > 330) { this.fbLogAt = Date.now(); this.d('feedback', { asked: { x: this.lastSet.x, y: this.lastSet.y }, got: { x: cur.x, y: cur.y } }); } // the system put the pointer somewhere else than asked
+        bx = cur.x; by = cur.y; this.dc('feedback');
+      } else this.dc('feedback.late');
+    } else this.fbPrev = null;
     const nx = bx + dx, ny = by + dy;
     if (L.dispAt(this.myDisplays, nx, ny)) {
       this.virt = { x: nx, y: ny };
@@ -1123,7 +1149,11 @@ class Link extends EventEmitter {
       // off every screen: either the way back to the other computer, or a wall
       const cl = L.clampToDisplays(this.myDisplays, nx, ny);
       if (!cl) return;
-      const c = L.crossing(this.myDisplays, this.myOff(), this.peer.displays, this.peerOff(), cl.x, cl.y, { dx: dx, dy: dy });
+      // A drag under way (resizing a window, selecting, moving a file) never leaves through the edge: the pointer stops at the wall, like
+      // the other computer does when it is the one dragging (see pushAllowed). Leaving would let go of the button in the middle of the drag.
+      const dragging = this.remoteHeld.size > 0 && Date.now() - this.remoteHeldAt < 120000;
+      const c = dragging ? null : L.crossing(this.myDisplays, this.myOff(), this.peer.displays, this.peerOff(), cl.x, cl.y, { dx: dx, dy: dy });
+      if (dragging) this.dc('block.drag.rx');
       if (c) {
         this.state = 'idle';
         this.owner = 'peer';
@@ -1139,9 +1169,13 @@ class Link extends EventEmitter {
     }
     this.placed(this.virt.x, this.virt.y);
     this.lastSet = { x: Math.round(this.virt.x), y: Math.round(this.virt.y) };
-    this.placeCursor(this.virt.x, this.virt.y);
-
+    // While the other computer drags (a screenshot selection, text, a window edge) the pointer moves as real input, through the same helper that
+    // presses the button (so the two stay in order): programs that follow the pointer from its input events see a glide, not jumps.
+    if (this.dragging() && this.input.moveAbs) this.input.moveAbs(this.virt.x, this.virt.y);
+    else this.placeCursor(this.virt.x, this.virt.y);
   }
+  // a button of the other computer is held on this one (or was a moment ago: the helper may still have moves to play)
+  dragging() { return (this.remoteHeld.size > 0 && Date.now() - this.remoteHeldAt < 120000) || Date.now() < (this.absUntil || 0); }
 
   // Movement arrives in bursts when the network jitters. Play it out at a steady rate instead of jumping:
   // each 4 ms tick applies a share of what is waiting, so a burst glides in over a few frames.
@@ -1215,6 +1249,10 @@ class Link extends EventEmitter {
   // injected (the modifiers already were, which is harmless).
   remoteHotkey(m) {
     if (HK.isMod(m.c)) { if (m.d) this.rMods.add(m.c); else this.rMods.delete(m.c); return false; }
+    if (m.d) { // the system's own screenshot shortcut typed on the other computer's keyboard: the picture is a screenshot taken here
+      const h = (a, b) => this.rMods.has(a) || this.rMods.has(b);
+      if (h('Meta', 'MetaRight') && h('Shift', 'ShiftRight') && ((process.platform === 'win32' && m.c === 'S') || (process.platform === 'darwin' && ['3', '4', '5'].includes(m.c)))) this.markShot();
+    }
     if (!m.d) return this.hotSwallow.delete(m.c);
     if (!this.hotkeys.length) return false;
     const hit = this.matchHotkey(this.rMods, m.c);
@@ -1304,9 +1342,9 @@ class Link extends EventEmitter {
     if (this.state !== 'controlling') return;
     const has = (a, b) => mods.has(a) || mods.has(b);
     // Win+Shift+S while controlling a Mac = Mac region screenshot (lands in the clipboard, which syncs back)
-    if (down && code === 'S' && this.peerPlat === 'darwin' && process.platform === 'win32' && has('Meta', 'MetaRight') && has('Shift', 'ShiftRight')) { this.send({ t: 'shot' }); return; }
+    if (down && code === 'S' && this.peerPlat === 'darwin' && process.platform === 'win32' && has('Meta', 'MetaRight') && has('Shift', 'ShiftRight')) { this.shotAskedUntil = Date.now() + 45000; this.send({ t: 'shot' }); return; }
     // Cmd+Shift+4 / 5 on the Mac while controlling a PC = Windows snipping (Win+Shift+S); the Mac's own screenshot UI is dismissed
-    if (down && (code === '4' || code === '5') && this.peerPlat === 'win32' && process.platform === 'darwin' && has('Meta', 'MetaRight') && has('Shift', 'ShiftRight')) { this.send({ t: 'shot' }); this.emit('suppress-shot'); return; }
+    if (down && (code === '4' || code === '5') && this.peerPlat === 'win32' && process.platform === 'darwin' && has('Meta', 'MetaRight') && has('Shift', 'ShiftRight')) { this.shotAskedUntil = Date.now() + 45000; this.send({ t: 'shot' }); this.emit('suppress-shot'); return; }
     if (down && code === 'Q' && has('Ctrl', 'CtrlRight') && has('Alt', 'AltRight') && has('Shift', 'ShiftRight')) return this.forceRelease();
     if (this.keyLog === undefined) this.keyLog = 0;
     if (this.keyLog++ < 8) console.log('[island] key ->', code, down ? 'down' : 'up');
@@ -1322,7 +1360,7 @@ class Link extends EventEmitter {
         this.chordActive = true;
         const a = this.buttonMap.chord;
         console.log('[island] back+forward chord ->', this.state === 'controlling' ? 'the other computer' : 'this computer', a || 'default');
-        if (this.state === 'controlling') this.send({ t: 'xbtn', k: 'chord' });
+        if (this.state === 'controlling') { this.shotAskedUntil = Date.now() + 45000; this.send({ t: 'xbtn', k: 'chord' }); }
         // here the action waits until the buttons are let go: the screenshot overlay closes at once when it opens while the hand still holds buttons
         else if (this.state === 'idle') this.chordPending = { a };
       }
@@ -1359,6 +1397,11 @@ class Link extends EventEmitter {
     if (down && !clicks) clicks = this.winClicks(button); // 0 = the caller cannot count the presses of a double click
     this.dc(down ? 'btn.tx' : 'btn.tx.up');
     if (down && (this.btnTxLog = (this.btnTxLog || 0) + 1) <= 6) { try { require('./lifecycle').line('button ' + button + ' sent to the other computer'); } catch {} }
+    // one line per real hold (a drag): how long the button was down and how many pointer moves went out meanwhile
+    if (button === 1 || button === 2) {
+      if (down) this.hold = { t: Date.now(), n: this.txMoves, b: button };
+      else if (this.hold && this.hold.b === button) { const ms = Date.now() - this.hold.t; if (ms > 300 && (this.holdLog = (this.holdLog || 0) + 1) <= 40) { try { const ts = this.tapStats && this.tapStats(); require('./lifecycle').line(`button ${button} held ${ms} ms, ${this.txMoves - this.hold.n} pointer moves sent meanwhile` + (ts ? `, movement tap: ${ts.n} events, gap avg ${ts.avg} ms, longest ${ts.max} ms, ${ts.frac} with a fraction` : '')); } catch {} } this.hold = null; }
+    }
     this.send({ t: down ? 'down' : 'up', b: button, n: clicks });
   }
   // rotation 0 is a partial notch from a smooth-scrolling device: nothing to forward (it used to scroll up by accident)
@@ -1469,7 +1512,7 @@ class Link extends EventEmitter {
       case 'notice': this.emit('notice', { title: String(m.title || '').slice(0, 60), text: String(m.text || '').slice(0, 140), kind: m.kind === 'err' ? 'err' : m.kind === 'progress' ? 'progress' : 'ok', ready: Math.min(10, Math.max(0, Number(m.ready) || 0)), hold: Math.min(10, Math.max(0, Number(m.hold) || 0)), step: Math.min(9, Number(m.step) || 0), of: Math.min(9, Number(m.of) || 0), glyph: m.glyph === 'there' ? 'there' : m.glyph === 'here' ? 'here' : '' }); break;
       case 'file-start': this.rxStart(m); break;
       case 'file-end': this.rxEnd(); break;
-      case 'shot': if (this.state === 'controlled') this.shoot(); break;
+      case 'shot': if (this.state === 'controlled') { this.shotForPeerUntil = Date.now() + 45000; this.shoot(); } break; // taken here for the other computer: it shows the notice, not this one
       case 'key':
         if (this.state === 'controlled' && this.remoteHotkey(m)) break;
         this.dc(this.state === 'controlled' ? 'key.rx' : 'key.rx.ignored');
@@ -1477,6 +1520,11 @@ class Link extends EventEmitter {
         break;
       case 'release': if (this.state === 'controlled') { this.state = 'idle'; this.owner = 'peer'; this.notify(); } break;
       case 'sync': this.emit('sync', m.items); break; // settings changed on the other computer
+      case 'wa': if (Array.isArray(m.items)) this.emit('wa', m.items.slice(0, 60), !!m.silent); break; // WhatsApp messages the other computer read from its notifications
+      case 'wastate': this.emit('wastate', !!m.open); break; // the other computer is (not) connected to WhatsApp
+      case 'wareply': if (m && typeof m.jid === 'string' && typeof m.text === 'string') this.emit('wareply', { jid: m.jid.slice(0, 80), text: m.text.slice(0, 2000), q: m.q && typeof m.q === 'object' ? { id: String(m.q.id || '').slice(0, 80), participant: String(m.q.participant || '').slice(0, 80), preview: String(m.q.preview || '').slice(0, 200) } : undefined }); break; // an answer to send from here
+      case 'wareplied': this.emit('wareplied', { ok: !!m.ok, error: String(m.error || '').slice(0, 80) }); break;
+      case 'water': if (m.w && typeof m.w === 'object') this.emit('water', m.w); break; // the water log and its settings (the newer copy wins)
       case 'gazeidle': this.emit('gazeidle', { idle: Number(m.idle), cal: !!m.cal }); break; // how long the other computer has been left alone (decides which camera runs)
       case 'fxcolors': this.emit('fxcolors', m.colors); break; // the animation colours picked on the other computer
       case 'owner': this.owner = m.mine ? 'peer' : 'me'; break;
@@ -1496,7 +1544,7 @@ class Link extends EventEmitter {
         break;
       }
       case 'xbtn':
-        if (this.state === 'controlled' && m.k === 'chord') { const a = this.buttonMap.chord; if (!this.runAction(a, 'chord', 0)) this.shoot(); break; }
+        if (this.state === 'controlled' && m.k === 'chord') { this.shotForPeerUntil = Date.now() + 45000; const a = this.buttonMap.chord; if (!this.runAction(a, 'chord', 0)) this.shoot(); break; }
         if (this.state === 'controlled' && (m.k === 'back' || m.k === 'forward')) { const a = this.buttonMap[m.k]; this.runAction(!a || a === 'default' ? m.k : a, m.k, 0); } break;
       case 'down':
         if (this.state !== 'controlled') { this.dc('btn.rx.ignored'); break; }
@@ -1505,9 +1553,11 @@ class Link extends EventEmitter {
         if (this.picker && (m.b === 1 || m.b === 2)) { if (m.b === 1) this.picker.pick(); else this.picker.cancel(); this.remoteEat = m.b; break; }
         if (m.b === 3) { const a = this.buttonMap.middle; if (a && a !== 'default') { this.midRemote = true; this.runAction(a, 'middle', 0); break; } }
         if ((this.pressRxLog = (this.pressRxLog || 0) + 1) <= 6) console.log('[island] remote button', m.b, 'down');
+        this.remoteHeld.add(m.b); this.remoteHeldAt = Date.now();
         this.input.press(m.b, m.n); break;
       case 'up':
         if (this.state !== 'controlled') break;
+        this.remoteHeld.delete(m.b); this.absUntil = Date.now() + 250;
         if (this.remoteEat === m.b) { this.remoteEat = 0; break; }
         if (m.b === 3 && this.midRemote) { this.midRemote = false; this.emit('middle-up'); break; }
         this.input.release(m.b); break;
@@ -1518,8 +1568,13 @@ class Link extends EventEmitter {
           const t = m.x > 0 ? 'tiltRight' : 'tiltLeft';
           if (this.runAction(this.buttonMap[t], t)) { m = { ...m, x: 0 }; if (!m.y) break; }
         }
-        if (m.n && this.prefs.smoothWheel) { this.remoteSmooth.add(m.x / 100, m.y / 100); this.dc('scroll.smooth'); }
-        else { this.injectAt = Date.now(); this.input.scroll(m.x, m.y, this.scrollSettings.speed, this.scrollSettings.reverse); }
+        if (m.n && this.prefs.smoothWheel) { this.rwAt = { x: this.virt.x, y: this.virt.y }; this.remoteSmooth.add(m.x / 100, m.y / 100); this.dc('scroll.smooth'); }
+        else {
+          this.injectAt = Date.now();
+          const pad = this.peerPlat === 'darwin' && process.platform === 'win32'; // a Mac trackpad steers this PC: Settings > Trackpad scroll
+          const ss = this.scrollSettings;
+          this.input.scroll(m.x * (pad && ss.tpH ? ss.tpH : 1), m.y * (pad && ss.tpV ? ss.tpV : 1), ss.speed * (pad ? TRACKPAD_TO_WHEEL : 1), ss.reverse);
+        }
         break;
     }
   }

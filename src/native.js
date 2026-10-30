@@ -318,6 +318,7 @@ function loadWinInput() {
       get: api.user32.func('bool __stdcall GetCursorPos(_Out_ POINT_ISL *p)'),
       set: api.user32.func('bool __stdcall SetCursorPos(int x, int y)'),
       send: api.user32.func('uint32_t __stdcall SendInput(uint32_t n, INPUT_ISL *inputs, int size)'),
+      sysMetric: api.user32.func('int __stdcall GetSystemMetrics(int i)'),
     };
   } catch (e) {
     console.error('[island] windows input unavailable:', e.message);
@@ -413,6 +414,16 @@ const winCursor = {
   foregroundElevated: winForegroundElevated,
   get: () => { const w = loadWinInput(); if (!w) return null; const p = {}; return w.get(p) ? { x: p.x, y: p.y } : null; },
   set: (x, y) => { const w = loadWinInput(); return w ? w.set(x, y) : false; },
+  // Move the pointer the way a real mouse does (an input event). SetCursorPos only moves the cursor: programs that follow the pointer from its input events
+  // (the screenshot selection, drawing and drag handles) then see it jump instead of glide. Only from the helper process (see input.js).
+  moveAbs: (x, y) => {
+    const w = loadWinInput();
+    if (!w) return false;
+    const m = w.sysMetric, vx = m(76), vy = m(77), vw = Math.max(2, m(78)), vh = Math.max(2, m(79)); // the virtual screen over all monitors
+    const nx = Math.round(((x - vx) * 65535) / (vw - 1)), ny = Math.round(((y - vy) * 65535) / (vh - 1));
+    w.send(1, [{ type: 0, pad: 0, dx: nx, dy: ny, mouseData: 0, dwFlags: 0x0001 | 0x4000 | 0x8000, time: 0, pad2: 0, dwExtraInfo: 0 }], 40); // MOVE | VIRTUALDESK | ABSOLUTE
+    return true;
+  },
   // side buttons (which: 1 = back, 2 = forward)
   xbutton: (which, isDown) => {
     const w = loadWinInput();
@@ -558,7 +569,7 @@ function installScrollTap(onScroll) {
         if (type === 22) { // kCGEventScrollWheel; point deltas are in pixels, positive = up / left
           const dy = Number(getInt(event, 96)), dx = Number(getInt(event, 97));
           // field 88 = continuous (trackpad / smooth devices), 42 = user data we put on the events we post ourselves
-          const info = { continuous: Number(getInt(event, 88)) !== 0, ours: Number(getInt(event, 42)) === 0x1517, lx: -Number(getInt(event, 12)), ly: -Number(getInt(event, 11)), flags: Number(getFlags(event)) };
+          const info = { continuous: Number(getInt(event, 88)) !== 0, momentum: Number(getInt(event, 123)) !== 0, ours: Number(getInt(event, 42)) === 0x1517, lx: -Number(getInt(event, 12)), ly: -Number(getInt(event, 11)), flags: Number(getFlags(event)) };
           if (!info.ours && !info.continuous && scrollPost) { // remember the latest real wheel event as the template for smoothed ones
             const c = scrollPost.copy(event);
             if (c) { if (scrollTemplate) scrollPost.release(scrollTemplate.ev); scrollTemplate = { ev: c, pid: Number(getInt(event, 40)), at: Date.now() }; }
@@ -802,6 +813,49 @@ function macMediaKey(name) {
   } catch (e) { console.error('[island] media key failed:', e.message); return false; }
 }
 
+// Real mouse movement as the system reports it (deltas), independent of which window gets the events. While a button is held the pointer lock of the
+// overlay window reports no movement at all (the drag goes to another window), so a drag could not move the pointer of the other computer. A
+// listen-only tap sees every moved / dragged event; it is made once and only switched on and off.
+let deltaTapSt = null;
+function setDeltaTap(on, handler) {
+  if (process.platform !== 'darwin' || !koffi) return false;
+  try {
+    if (!deltaTapSt) {
+      if (!on) return true;
+      const app = koffi.load('/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices');
+      const cf = koffi.load('/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation');
+      const Cb = koffi.proto('void *DeltaTapCb(void *proxy, uint32_t type, void *event, void *info)');
+      const create = app.func('void *CGEventTapCreate(uint32_t tap, uint32_t place, uint32_t options, uint64_t mask, DeltaTapCb *cb, void *info)');
+      const enable = app.func('void CGEventTapEnable(void *tap, bool on)');
+      const getInt = app.func('int64_t CGEventGetIntegerValueField(void *event, uint32_t field)');
+      const getDbl = app.func('double CGEventGetDoubleValueField(void *event, uint32_t field)'); // the delta with its fraction: a trackpad moves by less than a pixel per event
+      const makeSource = cf.func('void *CFMachPortCreateRunLoopSource(void *alloc, void *port, int64_t order)');
+      const mainLoop = cf.func('void *CFRunLoopGetMain()');
+      const addSource = cf.func('void CFRunLoopAddSource(void *rl, void *source, void *mode)');
+      const commonModes = koffi.decode(cf.symbol('kCFRunLoopCommonModes', 'void *'), 'void *');
+      const st = { enable, port: null, cb: null, on: false, handler: null, seen: 0, frac: 0, last: 0, gapSum: 0, gapMax: 0 };
+      st.cb = koffi.register((_proxy, type, event) => {
+        try {
+          if (type === 0xfffffffe || type === 0xffffffff) { if (st.on) enable(st.port, true); return event; } // the system switched the tap off: switch it back on
+          if (st.on && st.handler && Number(getInt(event, 41)) === 0) { // 41: the process that posted the event, 0 = the real hardware
+            const dx = getDbl(event, 4), dy = getDbl(event, 5); // the mouse delta fields
+            if (dx || dy) { const t = Date.now(); if (st.last) { const g = t - st.last; st.gapSum += g; st.gapMax = Math.max(st.gapMax, g); } st.last = t; st.seen++; if (dx !== Math.round(dx) || dy !== Math.round(dy)) st.frac++; st.handler(dx, dy); }
+          }
+        } catch { /* a tap callback must never throw */ }
+        return event;
+      }, koffi.pointer(Cb));
+      let mask = 0n;
+      for (const t of [5, 6, 7, 27]) mask |= 1n << BigInt(t); // moved, left / right / other dragged
+      st.port = create(1 /* session */, 0 /* head */, 1 /* listen only */, mask, st.cb, null);
+      if (!st.port) { console.error('[island] movement tap could not be made (Input Monitoring permission?)'); return false; }
+      addSource(mainLoop(), makeSource(null, st.port, 0), commonModes);
+      enable(st.port, false);
+      deltaTapSt = st;
+    }
+    deltaTapSt.handler = on ? handler : null; deltaTapSt.on = !!on; deltaTapSt.enable(deltaTapSt.port, !!on);
+    return true;
+  } catch (e) { console.error('[island] movement tap failed:', e.message); return false; }
+}
 const macMovePost = (x, y, heldButton) => macPost(heldButton && CG_BUTTON[heldButton] ? CG_BUTTON[heldButton].drag : 5, x, y, heldButton && CG_BUTTON[heldButton] ? CG_BUTTON[heldButton].n : 0);
 const macMouse = {
   // is the left button held down right now (a drag is under way)
@@ -813,6 +867,9 @@ const macMouse = {
     // CGEventSourceButtonState reads false for real drags on some Macs: ask AppKit for the held buttons too (bit 0 = left)
     try { const o = loadObjc(); return !!(o && (Number(o.i0(o.cls('NSEvent'), o.sel('pressedMouseButtons'))) & 1)); } catch { return false; } },
   available: () => !!loadCG(),
+  deltaTap: (on, handler) => setDeltaTap(on, handler),
+  // numbers of the movement tap since the last call (events, average / longest gap in ms, how many had a fraction): one line in the log after a drag
+  deltaTapStats: () => { const s = deltaTapSt; if (!s) return null; const r = { n: s.seen, avg: s.seen > 1 ? Math.round(s.gapSum / (s.seen - 1)) : 0, max: s.gapMax, frac: s.frac }; s.seen = s.frac = s.gapSum = s.gapMax = 0; s.last = 0; return r; },
   // Hide the pointer system-wide (not just over our own window), e.g. while the other computer is being controlled.
   // "SetsCursorInBackground" lets an app that is not frontmost hide the cursor as well.
   hideCursor: (hide) => {

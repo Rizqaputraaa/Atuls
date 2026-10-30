@@ -334,6 +334,9 @@ function openSettings(page) {
   });
   settingsWin.setMenu(null);
   settingsWin.once('ready-to-show', front);
+  // if the first frame never comes (the window was made while the system was busy or the pointer belonged to the other computer) it is shown anyway
+  settingsWin.webContents.once('did-finish-load', () => setTimeout(() => { if (settingsWin && !settingsWin.isDestroyed() && !settingsWin.isVisible()) { try { require('./lifecycle').line('settings window shown after load (no first frame)'); } catch {} front(); } }, 400));
+  setTimeout(() => { if (settingsWin && !settingsWin.isDestroyed() && !settingsWin.isVisible()) { try { require('./lifecycle').line('settings window shown after 3 s'); } catch {} front(); } }, 3000).unref();
   settingsWin.webContents.on('did-fail-load', (_e, c, d) => { console.error('[island] settings page failed to load', c, d); try { require('./lifecycle').line('settings page failed to load: ' + c + ' ' + d); } catch {} });
   settingsWin.webContents.on('render-process-gone', (_e, d) => { try { require('./lifecycle').line('settings renderer gone: ' + d.reason); } catch {} });
   settingsWin.webContents.on('preload-error', (_e, p, err) => { console.error('[island] settings preload error', p, err && err.message); try { require('./lifecycle').line('settings preload error: ' + (err && err.message)); } catch {} });

@@ -28,6 +28,8 @@ const restartHook = (tries = 0) => {
 // On macOS the mouse is injected with CoreGraphics so double clicks (click state) and drags work.
 const useCG = () => process.platform === 'darwin' && native.macMouse.available();
 let heldBtn = 0, clickState = 1, lastPos = { x: 0, y: 0 };
+// Windows: a pointer move as real input (used while the other computer drags, see link.js applyMove); other systems have none
+const moveAbs = (x, y) => { if (process.platform === 'win32' && native.winCursor.available()) native.winCursor.moveAbs(Math.round(x), Math.round(y)); };
 const setPos = (x, y) => {
   x = Math.round(x); y = Math.round(y);
   lastPos = { x, y };
@@ -143,4 +145,4 @@ function releaseLocalModifiers() {
 }
 const click = () => mouse.click(Button.LEFT).catch(() => {});
 
-module.exports = { restartHook, freelook, physicalMouse, getPos, start, stop, setPos, press, release, scroll, key, releaseAll, click, screenshot, releaseLocalModifiers };
+module.exports = { restartHook, freelook, physicalMouse, getPos, start, stop, setPos, moveAbs, press, release, scroll, key, releaseAll, click, screenshot, releaseLocalModifiers };

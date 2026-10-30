@@ -7,11 +7,11 @@
 <body>
 <div id="island" class="compact">
   <div id="shell"></div>
-  <div id="toast" class="ok"><span id="toast-icon"></span><div><b id="toast-title"></b><div id="toast-text"></div></div><span id="toast-glyph" hidden></span></div>
+  <div id="toast" class="ok"><span id="toast-icon"></span><div><b id="toast-title"></b><div id="toast-text"></div></div><span id="toast-glyph" hidden></span><form id="toast-reply" hidden autocomplete="off"><input id="toast-reply-in" placeholder="Reply..." maxlength="1000"><button type="submit" id="toast-reply-go">Send</button></form></div>
   <div id="pill">
     <span id="pill-left"><span id="pill-dot"></span><span id="pill-text">--:--</span></span>
     <span id="pill-gap"></span>
-    <span id="pill-right"><span id="pill-lock" hidden title="This computer's mouse and keyboard are switched off: the other computer is the master (Ctrl+Alt+M here takes over)"></span><span id="pill-link"></span><span id="pill-cam" hidden title="Camera is on (Look to switch)"></span></span>
+    <span id="pill-right"><span id="pill-lock" hidden title="This computer's mouse and keyboard are switched off: the other computer is the master (Ctrl+Alt+M here takes over)"></span><span id="pill-link"></span><span id="pill-cam" hidden title="Camera is on (Look to switch)"></span><span id="pill-water" hidden title="Time to drink water"><svg viewBox="0 0 24 24"><path d="M12 3.5c3.4 4.1 5.5 7 5.5 10a5.5 5.5 0 0 1-11 0c0-3 2.1-5.9 5.5-10z"/></svg></span></span>
   </div>
   <div id="panel">
     <div id="notes">
@@ -71,6 +71,67 @@
         <div class="mx-head"><b>Volume mixer</b><button id="mixer-x" class="ico" aria-label="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
         <div id="mx-list" class="scrolly"></div>
       </div>
+    </section>
+
+    <section class="page" id="tab-chat">
+      <div class="scrolly pg"><div id="wa-wrap">
+        <div class="pg-head">
+          <b>WhatsApp</b><small id="wa-sub"></small><span class="grow"></span>
+          <button id="wa-open" class="ico" title="Open WhatsApp" aria-label="Open WhatsApp"><svg viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-8.5 8.5M18 14v4.5a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 4 18.5v-11A1.5 1.5 0 0 1 5.5 6H10"/></svg></button>
+          <button id="wa-clear" class="ico" title="Clear the list" aria-label="Clear the list"><svg viewBox="0 0 24 24"><path d="M4.5 7h15M9.5 7V4.8h5V7M6.8 7l.9 12.2h8.6L17.2 7M10 11v5.5M14 11v5.5"/></svg></button>
+          <button id="wa-sw" class="mswitch" role="switch" aria-label="Show WhatsApp messages"><i></i></button>
+        </div>
+        <div id="wa-conn" class="wa-conn" hidden></div>
+        <div id="wa-names" class="wa-names" hidden>
+          <input id="wa-names-in" placeholder="Your name or number in groups, e.g. Budi, 0812..." maxlength="120" autocomplete="off">
+          <small>Group messages show only when you are tagged (@) with one of these.</small>
+        </div>
+        <div id="wa-note" class="empty" hidden></div>
+        <div id="wa-list"></div>
+      </div></div>
+    </section>
+
+    <section class="page" id="tab-water">
+      <div class="scrolly pg"><div id="water-wrap">
+        <div class="w-top">
+          <div id="water-ring">
+            <svg viewBox="0 0 120 120"><circle class="rt" cx="60" cy="60" r="52"/><circle class="rb" id="water-bar" cx="60" cy="60" r="52"/></svg>
+            <div class="w-num"><b id="water-ml">-</b><small id="water-of">min</small></div>
+          </div>
+          <div class="w-side">
+            <div id="water-next" class="w-next"></div>
+            <div class="w-btns">
+              <button id="water-add" class="w-main" title="Start the time again">I drank</button>
+              <button id="water-snooze" title="Remind me again in 15 minutes">Snooze 15 min</button>
+            </div>
+          </div>
+        </div>
+        <div class="w-set">
+          <div class="mini-row"><span>Reminders</span><button id="water-sw" class="mswitch" role="switch" aria-label="Water reminders"><i></i></button></div>
+          <label>Every<input id="water-every" type="number" min="5" max="480" step="5"><span>minutes</span></label>
+          <button id="water-test" class="w-link">Test</button>
+        </div>
+      </div></div>
+    </section>
+
+    <section class="page" id="tab-usage">
+      <div class="scrolly pg"><div id="usage-wrap">
+        <div class="u-card" id="u-ram">
+          <div class="u-head"><b>Memory</b><small id="u-ram-sub"></small></div>
+          <div class="u-bar"><i id="u-ram-bar"></i></div>
+          <div class="u-big"><b id="u-ram-used">-</b><span id="u-ram-of"></span></div>
+          <div id="u-top" class="u-top"></div>
+          <div class="u-foot" id="u-app"></div>
+        </div>
+        <div class="u-card" id="u-ai">
+          <div class="u-head"><b>AI tokens today</b><small id="u-ai-sub">Claude Code</small></div>
+          <div class="u-big"><b id="u-tok">-</b><span id="u-tok-of"></span></div>
+          <div id="u-days" class="u-days"></div>
+          <div id="u-parts" class="u-parts"></div>
+          <div id="u-plan" class="u-plan"></div>
+          <div class="u-foot" id="u-ai-foot"></div>
+        </div>
+      </div></div>
     </section>
 
     <section class="page" id="tab-tray">
@@ -163,8 +224,11 @@
       </div></div>
     </section>
 
-    </div></div>
-    <div id="dots"><i class="on" data-p="0"></i><i data-p="1"></i><i data-p="2"></i></div>
+    </div>
+    <button id="nav-prev" class="nav off" aria-label="Previous tab"><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg></button>
+    <button id="nav-next" class="nav" aria-label="Next tab"><svg viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></svg></button>
+    </div>
+    <div id="dots"><i class="on" data-p="0"></i><i data-p="1"></i><i data-p="2"></i><i data-p="3"></i><i data-p="4"></i><i data-p="5"></i></div>
   </div>
 </div>
 <script src="app.js"></script>

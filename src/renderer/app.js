@@ -11,7 +11,8 @@ let mixerOpen = false, mixTimer = null, mixDrag = 0, mixSyncAt = 0, mixSig = '';
 
 // The main process polls the cursor and tells us when it is over the island
 const MACOS = api.platform === 'darwin';
-const toastSize = () => [Math.max(SIZES.toast[0], SIZES.compact[0] + 32), SIZES.toast[1]]; // the banner is never narrower than the pill above it
+var replyToastOn = false, replyCtx = null; // a message banner with a field to answer in (it takes the pointer and the keyboard, so hovering must not open the panel meanwhile)
+const toastSize = () => [Math.max(SIZES.toast[0], SIZES.compact[0] + 32), SIZES.toast[1] + (replyToastOn ? 48 : 0)]; // the banner is never narrower than the pill above it
 const SIZES = { compact: MACOS ? [464, 34] : [234, 34], open: [624, 410], toast: MACOS ? [520, 100] : [380, 100] };
 // the pill is as tall as the menu bar (notched MacBooks) and leaves the notch free
 api.metrics().then((m) => {
@@ -24,6 +25,7 @@ api.metrics().then((m) => {
   if (!isOpen) { api.islandSize(...SIZES.compact); api.windowSize(...SIZES.compact); }
 });
 let needLeave = false, hoverInside = false, isOpen = false, shrinkTimer, pinned = false, dragging = false;
+var openMode = 'hover', navMode = 'hover'; // Settings > General: the island opens on hover or on a click of the pill; its tab buttons work on hover or on a click
 const setOpen = (v) => {
   if (v !== isOpen) ui(v ? 'island panel opened' : 'island panel closed');
   if (v && !isOpen && !dragging) goHome(); // every time the pill opens it shows the home page, whatever tab was used last
@@ -41,15 +43,18 @@ const setOpen = (v) => {
 setOpen(false);
 api.onHover((inside) => {
   hoverInside = inside;
+  if (replyToastOn) return;
   clearTimeout(closeTimer);
   if (!inside) needLeave = false;
-  if (inside) { if (!isOpen && !needLeave) setOpen(true); return; }
+  if (inside) { if (!isOpen && !needLeave && openMode === 'hover') setOpen(true); return; }
   if (pinned) return; // a click inside keeps the island open until you click outside
   closeTimer = setTimeout(() => {
     if (document.activeElement && /INPUT|SELECT/.test(document.activeElement.tagName)) return;
     setOpen(false);
   }, 350);
 });
+// click mode: main saw a click on the small pill (it reads it from the input hook): the panel opens and stays until a click lands outside
+api.onPillClick(() => { if (openMode !== 'click' || isOpen) return; ui('island pill clicked'); setOpen(true); pinned = true; api.pin(true); });
 // clicking anything inside pins the island open; main tells us when a click lands outside
 document.getElementById('panel').addEventListener('mousedown', () => { if (!pinned) { pinned = true; api.pin(true); } });
 api.onUnpin(() => { pinned = false; api.pin(false); if (!hoverInside) setOpen(false); });
@@ -115,8 +120,8 @@ refreshPill();
 // the letters are Gilroy: measure the pill again once the font is there
 if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { pillShown = null; refreshPill(); });
 
-// pages: Home, Tray, Link. The mouse wheel moves between them and the dots show where you are.
-const PAGES = ['media', 'tray', 'link'];
+// pages: Home, WhatsApp, Water, Usage, Tray, Link. The mouse wheel moves between them and the dots show where you are.
+const PAGES = ['media', 'chat', 'water', 'usage', 'tray', 'link'];
 let pageIdx = 0, wheelLock = 0;
 island.dataset.page = 0;
 function showPage(i, instant) {
@@ -128,29 +133,38 @@ function showPage(i, instant) {
   if (i !== pageIdx) ui('island page -> ' + PAGES[i]);
   pageIdx = i;
   island.dataset.page = i;
+  if (PAGES[i] === 'chat' && typeof waMarkSeen === 'function') waMarkSeen(); // the messages of the page have been seen after a moment
+  if (typeof renderWaBadge === 'function') renderWaBadge();
+  if (PAGES[i] === 'usage' && typeof usageRefresh === 'function') usageRefresh();
   updateOpenH();
   document.querySelectorAll('#dots i').forEach((d) => d.classList.toggle('on', Number(d.dataset.p) === i));
+  $('#nav-prev').classList.toggle('off', i === 0);
+  $('#nav-next').classList.toggle('off', i === PAGES.length - 1);
   if (i !== 0) closeMixer();
 }
+// arrow buttons at the left and right edge of the open island: previous / next tab, on hover (the pointer rests on the arrow for a moment: one tab)
+// or on a click, as chosen in Settings > General
+let navTimer = null;
+function navButton(el, dir) {
+  const stop = () => { clearTimeout(navTimer); navTimer = null; };
+  const step = () => { navTimer = null; showPage(pageIdx + dir); }; // one tab per visit of the pointer: it has to leave the arrow and come back for the next one
+  el.onmouseenter = () => { if (navMode !== 'hover' || el.classList.contains('off')) return; stop(); navTimer = setTimeout(step, 260); };
+  el.onmouseleave = stop;
+  el.onclick = () => { if (navMode === 'click') showPage(pageIdx + dir); };
+}
+navButton($('#nav-prev'), -1);
+navButton($('#nav-next'), 1);
 const showTab = (name) => showPage(PAGES.indexOf(name));
 document.querySelectorAll('#dots i').forEach((d) => (d.onclick = () => showPage(Number(d.dataset.p))));
-// Pages move with the wheel. A mouse wheel (it turns in whole notches) goes up / down; a trackpad (smooth, pixel by pixel) goes left / right,
-// like swiping between pages. A list that can still scroll keeps its own vertical wheel; at its end the wheel moves on to the next page.
+// Tabs move with a sideways swipe on a trackpad (and the arrow buttons at the edges). Scrolling up / down never changes the tab: it only
+// scrolls the list under the pointer.
 let wheelAt = 0, wheelHandled = false, wheelDir = 0, wheelMag = 0;
 $('#panel').addEventListener('wheel', (e) => {
   const now = Date.now(), gap = now - wheelAt;
   wheelAt = now;
   if (gap > 140) wheelHandled = false; // a new gesture: the momentum of the last one has died out
-  const notched = e.deltaX === 0 && e.wheelDeltaY !== undefined && e.wheelDeltaY !== 0 && Math.abs(e.wheelDeltaY) % 120 === 0; // a mouse wheel
   let d = 0;
-  if (notched) {
-    const sc = e.target.closest && e.target.closest('.scrolly');
-    if (sc && sc.scrollHeight > sc.clientHeight + 1) {
-      const top = sc.scrollTop <= 0, end = sc.scrollTop + sc.clientHeight >= sc.scrollHeight - 1;
-      if ((e.deltaY < 0 && !top) || (e.deltaY > 0 && !end)) return;
-    }
-    d = e.deltaY;
-  } else if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) d = e.deltaX; // trackpad: only the sideways swipe changes the page
+  if (!e.shiftKey && Math.abs(e.deltaX) > Math.abs(e.deltaY) * 1.5) d = e.deltaX; // only a clearly sideways swipe (Shift + wheel is vertical scrolling turned sideways)
   // the momentum of the last swipe keeps arriving for about a second: a swipe the other way, or a clearly stronger one, is a new gesture
   if (d) { if (wheelHandled && (Math.sign(d) !== wheelDir || Math.abs(d) > wheelMag * 1.8 + 6)) wheelHandled = false; wheelMag = Math.abs(d); }
   if (Math.abs(d) < 8 || wheelHandled) return;
@@ -428,7 +442,7 @@ api.onTransfer((t) => {
 });
 
 // the panel is as tall as its page needs (the tray page is short, the others are full)
-function wantH() { return pageIdx === 1 ? Math.max(190, Math.min(410, 90 + $('#tray-wrap').offsetHeight)) : pageIdx === 2 ? Math.max(250, Math.min(450, 92 + $('#link-wrap').offsetHeight)) : 410; }
+function wantH() { const p = PAGES[pageIdx]; return p === 'tray' ? Math.max(190, Math.min(410, 90 + $('#tray-wrap').offsetHeight)) : p === 'link' ? Math.max(250, Math.min(450, 92 + $('#link-wrap').offsetHeight)) : 410; }
 let holdH = 0, holdUntil = 0; // while dust is flying the panel keeps its height
 function updateOpenH() {
   let h = wantH();
@@ -599,7 +613,9 @@ function endToast() {
   if (typeof stopRing === 'function') stopRing();
   if (!toastOn) return;
   toastOn = false;
-  island.classList.remove('toast');
+  replyToastOn = false; replyCtx = null;
+  island.classList.remove('toast', 'treply');
+  $('#toast').classList.remove('reply'); $('#toast-reply').hidden = true;
   if (!isOpen) { api.islandSize(...SIZES.compact); api.windowSize(...SIZES.compact); }
 }
 let ringTimers = [];
@@ -634,6 +650,8 @@ const TUNES = {
   start: [[196, 0, 0.7, 'triangle'], [392, 0.02, 0.14], [523, 0.14, 0.14], [659, 0.26, 0.14], [784, 0.38, 0.16], [1047, 0.52, 0.6]],
   shot: [[2400, 0, 0.03, 'square'], [1500, 0.035, 0.07, 'sine']],
   impact: [[95, 0, 0.14, 'sine'], [58, 0.015, 0.2, 'sine'], [1900, 0, 0.012, 'square']],
+  chat: [[1047, 0, 0.07], [1397, 0.08, 0.12]],
+  water: [[784, 0, 0.12], [988, 0.14, 0.12], [1319, 0.28, 0.12], [1568, 0.42, 0.3]],
 };
 function chime(kind, vol) {
   const tune = TUNES[kind] || TUNES.ok;
@@ -655,7 +673,7 @@ function chime(kind, vol) {
   } catch {}
 }
 api.onChime((c) => chime(c.kind, c.vol));
-const soundKind = (t) => (t.kind === 'err' ? 'err' : t.icon === 'sent' ? 'sent' : t.icon === 'received' ? 'received' : /^Connected/.test(t.title || '') ? 'connected' : /^Screenshot/.test(t.title || '') ? 'shot' : 'ok');
+const soundKind = (t) => (t.kind === 'err' ? 'err' : t.icon === 'sent' ? 'sent' : t.icon === 'received' ? 'received' : t.icon === 'chat' ? 'chat' : t.icon === 'water' ? 'water' : /^Connected/.test(t.title || '') ? 'connected' : /^Screenshot/.test(t.title || '') ? 'shot' : 'ok');
 api.onToast((t) => {
   if (t.kind !== 'progress') chime(soundKind(t), t.sound || 0);
   stopRing();
@@ -665,7 +683,12 @@ api.onToast((t) => {
   $('#toast-text').textContent = t.text;
   $('#toast').classList.toggle('err', err);
   $('#toast').classList.toggle('prog', prog);
-  $('#toast').classList.toggle('deco-icon', t.icon === 'sent' || t.icon === 'received'); // (not called 'ico': that class is the round icon button style)
+  $('#toast').classList.toggle('water', t.icon === 'water');
+  replyToastOn = !!t.reply; replyCtx = t.reply || null;
+  $('#toast').classList.toggle('reply', replyToastOn); island.classList.toggle('treply', replyToastOn);
+  $('#toast-reply').hidden = !replyToastOn;
+  if (replyToastOn) { const inp = $('#toast-reply-in'); inp.value = ''; inp.placeholder = 'Reply to ' + String(t.title || '').split(' (+')[0] + '...'; }
+  $('#toast').classList.toggle('deco-icon', t.icon === 'sent' || t.icon === 'received' || t.icon === 'water'); // (not called 'ico': that class is the round icon button style)
   $('#toast-text').textContent = t.text;
   const gl = $('#toast-glyph');
   gl.hidden = !(prog && t.step);
@@ -675,6 +698,8 @@ api.onToast((t) => {
   if (prog) runRing(t.ready || 3, t.hold || 2, t.glyph === 'there');
   else if (t.icon === 'sent') $('#toast-icon').innerHTML = '<svg viewBox="0 0 24 24"><path d="M4 12l16-8-6 16-3-7z"/></svg>';
   else if (t.icon === 'received') $('#toast-icon').innerHTML = '<svg viewBox="0 0 24 24"><path d="M12 4v11M7 11l5 5 5-5M5 20h14"/></svg>';
+  else if (t.icon === 'chat') $('#toast-icon').innerHTML = '<svg viewBox="0 0 24 24"><path d="M4.5 5.5h15v10.5H11l-4.5 3.5V16h-2z" style="stroke-width:2.4;stroke-dasharray:none"/></svg>';
+  else if (t.icon === 'water') $('#toast-icon').innerHTML = '<svg viewBox="0 0 24 24"><path d="M12 3.5c3.4 4.1 5.5 7 5.5 10a5.5 5.5 0 0 1-11 0c0-3 2.1-5.9 5.5-10z" style="stroke-width:2.4;stroke-dasharray:none"/></svg>';
   else $('#toast-icon').innerHTML = err
     ? '<svg viewBox="0 0 24 24"><path d="M12 6.5v7"/><path d="M12 17.5v.01"/></svg>'
     : '<svg viewBox="0 0 24 24"><path d="M5.5 12.5l4.2 4.2L18.5 7.8"/></svg>';
@@ -685,12 +710,12 @@ api.onToast((t) => {
     pinned = false; api.pin(false);
     needLeave = hoverInside; // don't pop the panel open again until the mouse has left the pill
     setOpen(false);
-  } else { api.islandSize(...SIZES.compact); api.windowSize(...toastSize()); }
+  } else { if (replyToastOn) api.islandSize(...toastSize()); else api.islandSize(...SIZES.compact); api.windowSize(...toastSize()); } // a banner with a reply field takes clicks
   // replay the entrance animation (block drops in, icon pops, tick draws, text slides up)
   const box = $('#toast');
   box.classList.remove('play'); void box.offsetWidth; box.classList.add('play');
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(endToast, prog ? ((t.ready || 3) + (t.hold || 2)) * 1000 + 6000 : 4500); // a step stays until the next message replaces it
+  toastTimer = setTimeout(endToast, replyToastOn ? 20000 : prog ? ((t.ready || 3) + (t.hold || 2)) * 1000 + 6000 : 4500); // a step stays until the next message replaces it
 });
 
 // calendar: yesterday, today, tomorrow and the day after, with a coloured dot for every activity (Settings > Calendar connects the calendars)
@@ -955,6 +980,8 @@ function setPillPos(r, first) {
 }
 const applyLook = (l) => {
   if (l && l.pillPos) setPillPos(l.pillPos === 'right');
+  if (l && l.openMode) openMode = l.openMode;
+  if (l && l.navMode) navMode = l.navMode;
   document.documentElement.style.setProperty('--deco', (l && l.accent) || '#0a84ff');
   const img = $('#avatar-img');
   img.classList.toggle('logo', !(l && l.profile));
@@ -963,7 +990,7 @@ const applyLook = (l) => {
 api.lookGet().then(applyLook).catch(() => {});
 api.onLook(applyLook);
 $('#avatar').onclick = () => { ui('home: picture clicked'); api.profileChoose(); };
-$('#top-link').onclick = () => showPage(2);
+$('#top-link').onclick = () => showTab('link');
 
 // volume: the slider under the music is the volume of the whole computer; the mixer icon opens one slider for every program
 const throttle = (fn, ms) => { let t = 0, timer = null, last; return (...a) => { last = a; const w = ms - (Date.now() - t); if (w <= 0) { t = Date.now(); fn(...last); } else if (!timer) timer = setTimeout(() => { timer = null; t = Date.now(); fn(...last); }, w); }; };
@@ -1064,3 +1091,259 @@ $('#lk-cal').onclick = async () => {
   api.gazeCalibrate();
 };
 $('#lk-gaze-sw').onclick = () => { ui('link: look to switch ' + (gazeNow.enabled ? 'off' : 'on')); api.gazeSet(!gazeNow.enabled); };
+
+// ---- WhatsApp page: the messages of the linked WhatsApp (or, without one, the ones WhatsApp shows as notifications on the Windows PC), grouped
+// by chat. They are read by the main process (wa-connect.js / notify.js) and also reach the linked computer. Rows with a green dot are new since
+// the page was last looked at. With a connection a chat can be answered right here.
+var waState = { on: false, canRead: false, items: [], conn: { state: 'off' }, canReply: false }, waSeenAt = Date.now(), waSeenTimer = null;
+var waOpenChats = new Set(), waDrafts = new Map();
+const mk = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; };
+const initialsOf = (s) => { const w = String(s || '?').split(' ').filter(Boolean); return (Array.from(w[0] || '?')[0] + (w.length > 1 ? Array.from(w[1])[0] : '')).toUpperCase(); };
+const hueOf = (s) => { let h = 0; for (const c of String(s)) h = (h * 31 + c.codePointAt(0)) % 360; return h; };
+const clockOf = (t) => new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+function agoOf(t) {
+  const m = Math.floor((Date.now() - t) / 60000);
+  if (m < 1) return 'now';
+  if (m < 60) return m + ' min';
+  const d = new Date(t);
+  return d.toDateString() === new Date().toDateString() ? clockOf(t) : d.toLocaleDateString([], { day: 'numeric', month: 'short' });
+}
+const waUnread = () => waState.items.filter((e) => e.at > waSeenAt && !e.mine).length;
+function renderWaBadge() { if (!waState) return; const d = document.querySelector('#dots i[data-p="' + PAGES.indexOf('chat') + '"]'); if (d) d.classList.toggle('badge', waUnread() > 0 && PAGES[pageIdx] !== 'chat'); }
+const waApply = (r) => { waState = r; renderWa(); renderWaBadge(); };
+
+// the connection card: connect (QR), connecting, connected
+function renderWaConn() {
+  const s = waState, box = $('#wa-conn'), c = s.conn || { state: 'off' };
+  box.textContent = '';
+  box.hidden = !s.on;
+  if (!s.on) return;
+  const btn = (label, fn, cls) => { const b = mk('button', cls || 'wa-btn', label); b.onclick = fn; return b; };
+  if (c.state === 'open') {
+    const line = mk('div', 'wa-line');
+    line.append(mk('span', '', 'Connected' + (c.name ? ' as ' + c.name : '') + ' · you can reply here'), btn('Disconnect', () => { ui('whatsapp: disconnect'); api.waDisconnect().then(waApply); }, 'wa-linkbtn'));
+    box.appendChild(line);
+  } else if (c.state === 'qr') {
+    const card = mk('div', 'wa-card wa-qr');
+    const img = mk('img'); img.src = c.qr; img.alt = 'QR code';
+    const side = mk('div', 'wa-qr-text');
+    side.append(mk('b', '', 'Scan with your phone'), mk('span', '', 'WhatsApp › Settings › Linked devices › Link a device, then point the camera at this code.'), btn('Cancel', () => api.waCancel().then(waApply), 'wa-linkbtn'));
+    card.append(img, side);
+    box.appendChild(card);
+  } else if (c.state === 'connecting') {
+    const line = mk('div', 'wa-line');
+    line.append(mk('span', '', 'Connecting to WhatsApp...'), btn('Cancel', () => api.waCancel().then(waApply), 'wa-linkbtn'));
+    box.appendChild(line);
+  } else {
+    const card = mk('div', 'wa-card');
+    const side = mk('div', 'wa-qr-text');
+    side.append(mk('b', '', s.canReply ? 'The linked computer is connected' : 'Reply from here (optional)'),
+      mk('span', '', s.canReply ? 'Replies from here are sent through it.' : 'Messages already show here from the WhatsApp Desktop notifications, with nothing to connect. Only to REPLY from the island does WhatsApp need a second linked device: scan one QR code (WhatsApp › Settings › Linked devices). It uses an unofficial feature of WhatsApp; you can unlink any time.'));
+    if (!s.canReply) side.appendChild(btn('Connect', () => { ui('whatsapp: connect'); api.waConnect().then(waApply); }));
+    card.appendChild(side);
+    box.appendChild(card);
+  }
+}
+
+function renderWa() {
+  const s = waState, list = $('#wa-list'), note = $('#wa-note');
+  const linked = typeof linkInfo !== 'undefined' && !!(linkInfo && linkInfo.connected);
+  const connected = !!(s.conn && s.conn.state === 'open');
+  $('#wa-sw').classList.toggle('on', !!s.on);
+  $('#wa-sw').setAttribute('aria-checked', s.on ? 'true' : 'false');
+  $('#wa-clear').hidden = !s.on || !s.items.length;
+  $('#wa-sub').textContent = s.on && s.items.length ? s.items.length + (s.items.length === 1 ? ' message' : ' messages') : '';
+  $('#wa-names').hidden = !(s.on && s.canRead && !connected && !(s.conn && s.conn.state !== 'off')); // names are only needed when WhatsApp is not connected
+  if (document.activeElement !== $('#wa-names-in')) $('#wa-names-in').value = (s.names || []).join(', ');
+  renderWaConn();
+  // keep what the person is typing across a redraw
+  const act = document.activeElement, focusChat = act && act.dataset && act.dataset.chat, caret = focusChat ? act.selectionStart : 0;
+  list.textContent = '';
+  note.textContent = '';
+  note.hidden = false;
+  if (!s.on) {
+    note.appendChild(mk('div', '', s.canRead
+      ? 'See the WhatsApp messages you get on this computer here, and answer them from the island once WhatsApp is connected.'
+      : linked ? 'Turn this on to see the WhatsApp messages the linked computer receives.'
+        : 'Turn this on to see WhatsApp messages here. A linked computer shows them too.'));
+    const b = mk('button', '', 'Turn on'); b.onclick = () => { ui('whatsapp: turned on'); api.waSet(true).then(waApply); };
+    note.appendChild(b);
+    return;
+  }
+  if (!s.items.length) {
+    note.textContent = connected || s.canRead || linked ? 'No messages yet. New WhatsApp messages show up here as they arrive.' : 'Connect WhatsApp above, or link a Windows PC with WhatsApp Desktop, to see messages here.';
+    return;
+  }
+  note.hidden = true;
+  const by = new Map();
+  for (const e of s.items) { if (!by.has(e.chat)) by.set(e.chat, []); by.get(e.chat).push(e); }
+  const chats = [...by.values()].sort((a, b) => b[b.length - 1].at - a[a.length - 1].at);
+  for (const arr of chats) {
+    const last = arr[arr.length - 1], theirs = arr.filter((e) => !e.mine), head = theirs.length ? theirs[theirs.length - 1] : last;
+    const row = mk('div', 'wa-row' + (arr.some((e) => e.at > waSeenAt && !e.mine) ? ' new' : '') + (waOpenChats.has(last.chat) ? ' open' : ''));
+    const av = mk('div', 'wa-av', initialsOf(head.title)); av.style.background = 'hsl(' + hueOf(last.chat) + ',42%,36%)';
+    const body = mk('div', 'wa-body');
+    const top = mk('div', 'wa-top'); top.appendChild(mk('b', '', head.title)); top.appendChild(mk('time', '', agoOf(last.at)));
+    const msg = mk('div', 'wa-msg');
+    if (last.from) msg.appendChild(mk('i', '', last.from + ': '));
+    msg.appendChild(document.createTextNode(last.text));
+    const hist = mk('div', 'wa-hist');
+    for (const e of arr.slice(-8, -1).reverse()) { const d = mk('div'); d.appendChild(mk('time', '', clockOf(e.at))); d.appendChild(mk('span', '', (e.from ? e.from + ': ' : '') + e.text)); hist.appendChild(d); }
+    body.append(top, msg, hist);
+    if (s.canReply && /@/.test(last.chat)) {
+      const form = mk('form', 'wa-reply'), inp = mk('input'), go = mk('button', '', 'Send');
+      inp.placeholder = 'Reply...'; inp.maxLength = 1000; inp.autocomplete = 'off'; inp.dataset.chat = last.chat; inp.value = waDrafts.get(last.chat) || '';
+      inp.oninput = () => waDrafts.set(last.chat, inp.value);
+      go.type = 'submit';
+      form.onclick = (ev) => ev.stopPropagation();
+      form.onsubmit = (ev) => {
+        ev.preventDefault();
+        const text = inp.value.trim();
+        if (!text) return;
+        go.disabled = true;
+        ui('whatsapp: reply from the list');
+        api.waReply(last.chat, text, head.q ? { ...head.q, preview: head.text.slice(0, 100) } : undefined).then((r) => {
+          go.disabled = false;
+          if (r.ok) { inp.value = ''; waDrafts.delete(last.chat); inp.placeholder = 'Sent'; } else { inp.placeholder = r.error || 'Not sent'; }
+        });
+      };
+      form.append(inp, go);
+      body.appendChild(form);
+    }
+    row.append(av, body);
+    if (arr.length > 1) row.appendChild(mk('span', 'wa-more', String(arr.length)));
+    row.onclick = () => { row.classList.toggle('open'); if (row.classList.contains('open')) waOpenChats.add(last.chat); else waOpenChats.delete(last.chat); };
+    list.appendChild(row);
+    if (focusChat === last.chat) { const i = row.querySelector('input'); if (i) { i.focus(); try { i.setSelectionRange(caret, caret); } catch { /* not a text field */ } } }
+  }
+}
+function waMarkSeen() {
+  clearTimeout(waSeenTimer);
+  waSeenTimer = setTimeout(() => { if (PAGES[pageIdx] === 'chat' && isOpen) { waSeenAt = Date.now(); renderWaBadge(); } }, 2500); // the green dots stay a moment so they can be seen
+}
+api.onWa((s) => {
+  const had = waState.items.length;
+  waApply(s);
+  if (s.items.length > had && isOpen && PAGES[pageIdx] === 'chat') waMarkSeen();
+});
+api.waGet().then((s) => { waSeenAt = Date.now(); waApply(s); });
+$('#wa-sw').onclick = () => { ui('whatsapp: switch ' + (waState.on ? 'off' : 'on')); api.waSet(!waState.on).then(waApply); };
+$('#wa-names-in').onchange = (e) => { ui('whatsapp: tag names changed'); api.waNames(e.target.value).then(waApply); };
+$('#wa-clear').onclick = () => { ui('whatsapp: list cleared'); api.waClear().then(waApply); };
+$('#wa-open').onclick = () => { ui('whatsapp: open the app'); api.waOpen(); };
+setInterval(() => { if (isOpen && PAGES[pageIdx] === 'chat' && waState.on && !(document.activeElement && document.activeElement.dataset && document.activeElement.dataset.chat)) renderWa(); }, 30000); // the times ("5 min") move on
+
+// ---- Water page: a reminder every so many minutes. The ring fills as the time to the next reminder runs out.
+var water = null;
+const WATER_FULL = 326.7; // length of the ring (2 * pi * 52)
+function renderWaterNext() {
+  const w = water;
+  if (!w) return;
+  const left = w.on && w.nextAt ? w.nextAt - Date.now() : 0;
+  const frac = w.on && w.nextAt ? Math.min(1, Math.max(0, 1 - left / (w.every * 60000))) : 0;
+  $('#water-bar').style.strokeDashoffset = String(WATER_FULL * (1 - frac));
+  $('#water-ml').textContent = !w.on ? '-' : left <= 0 ? 'now' : String(Math.max(1, Math.ceil(left / 60000)));
+  $('#water-of').textContent = !w.on ? 'off' : left <= 0 ? 'time to drink' : 'min';
+  $('#water-next').textContent = !w.on ? 'Reminders are off' : w.snoozeUntil > Date.now() ? 'Snoozed until ' + clockOf(w.snoozeUntil) : left <= 0 ? 'A reminder is due' : 'Next reminder at ' + clockOf(w.nextAt);
+}
+function renderWater() {
+  const w = water;
+  if (!w) return;
+  $('#water-sw').classList.toggle('on', !!w.on);
+  $('#water-sw').setAttribute('aria-checked', w.on ? 'true' : 'false');
+  if (document.activeElement !== $('#water-every')) $('#water-every').value = w.every;
+  $('#pill-water').hidden = !w.alert;
+  renderWaterNext();
+}
+const setWater = (w) => { water = w; renderWater(); };
+api.onWater(setWater);
+api.waterGet().then(setWater);
+$('#water-add').onclick = () => { ui('water: drank'); api.waterDrink().then(setWater); };
+$('#water-snooze').onclick = () => { ui('water: snooze 15 min'); api.waterSnooze(15).then(setWater); };
+$('#water-test').onclick = () => { api.waterTest(); };
+$('#water-sw').onclick = () => { if (!water) return; ui('water: reminders ' + (water.on ? 'off' : 'on')); api.waterSet({ on: !water.on }).then(setWater); };
+$('#water-every').onchange = (e) => { const v = Number(e.target.value); if (v >= 5) api.waterSet({ every: v }).then(setWater); };
+setInterval(renderWaterNext, 15000);
+
+// ---- Usage page: memory of this computer and the AI tokens (Claude Code) used today. Asked for only while the page is in view.
+var usageBusy = false;
+const fmtTok = (n) => (n >= 1e7 ? Math.round(n / 1e6) + 'M' : n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e3 ? Math.round(n / 1e3) + 'k' : String(n));
+const fmtMem = (mb) => (mb >= 1024 ? (mb / 1024).toFixed(1) + ' GB' : Math.round(mb) + ' MB');
+function renderUsage(u) {
+  const r = u.ram, pct = Math.round((r.used / r.total) * 100);
+  $('#u-ram-used').textContent = (r.used / 1073741824).toFixed(1) + ' GB';
+  $('#u-ram-of').textContent = 'of ' + (r.total / 1073741824).toFixed(1) + ' GB · ' + pct + '%';
+  const bar = $('#u-ram-bar'); bar.style.width = pct + '%'; bar.style.background = pct >= 85 ? '#ff453a' : pct >= 70 ? '#ff9f0a' : '#30d158';
+  const top = $('#u-top'); top.textContent = '';
+  const max = Math.max(1, ...r.top.map((t) => t.mb));
+  for (const t of r.top) {
+    const row = mk('div', 'u-row'); const bg = mk('i'); bg.style.width = Math.max(4, (t.mb / max) * 100) + '%';
+    row.append(bg, mk('span', '', t.name), mk('em', '', fmtMem(t.mb)));
+    top.appendChild(row);
+  }
+  $('#u-app').textContent = 'A-tuls itself uses ' + fmtMem(r.app);
+  const a = u.ai, t = a.today, sum = t.input + t.output;
+  $('#u-tok').textContent = a.found ? fmtTok(sum) : '-';
+  $('#u-tok-of').textContent = a.found ? 'input + output · ' + t.answers + ' answers' : '';
+  const days = $('#u-days'); days.textContent = '';
+  const dmax = Math.max(1, ...a.days.map((d) => d.tokens));
+  a.days.forEach((d, i) => { const c = mk('div', 'u-day' + (i === a.days.length - 1 ? ' now' : '')); const b = mk('i'); b.style.height = Math.max(3, (d.tokens / dmax) * 100) + '%'; c.title = d.day + ': ' + fmtTok(d.tokens) + ' tokens'; c.append(b, mk('small', '', d.day.slice(3))); days.appendChild(c); });
+  const parts = $('#u-parts'); parts.textContent = '';
+  for (const [l, v] of [['Input', t.input], ['Output', t.output], ['Cache', t.cacheRead + t.cacheWrite]]) { const p = mk('span', '', l + ' '); p.appendChild(mk('b', '', fmtTok(v))); parts.appendChild(p); }
+  renderPlan(u.plan);
+  $('#u-ai-foot').textContent = !a.found ? 'No Claude Code files found on this computer.' : a.scanning ? 'Reading the files...' : a.models.length ? a.models.map((m) => m.model + ' ' + fmtTok(m.tokens)).join(' · ') : 'Nothing used today yet';
+}
+function resetText(at) {
+  const d = at - Date.now();
+  if (!at) return '';
+  if (d <= 60000) return 'Resets soon';
+  const days = Math.floor(d / 86400000), hr = Math.floor((d % 86400000) / 3600000), min = Math.round((d % 3600000) / 60000);
+  return 'Resets in ' + (days >= 2 ? days + ' days' : hr + ' hr ' + min + ' min');
+}
+// the bars of the Claude plan (session and weekly limit), only when the person switched them on
+function renderPlan(p) {
+  const box = $('#u-plan'); box.textContent = '';
+  if (!p || !p.enabled) {
+    const b = mk('button', 'wa-linkbtn', 'Show my Claude plan limits'); b.title = 'Uses the Claude Code login on this computer to ask Anthropic for the percentages';
+    b.onclick = () => api.usagePlan(true).then(usageRefresh);
+    box.appendChild(b); return;
+  }
+  const head = mk('div', 'u-planhead'); head.append(mk('b', '', 'Plan limits' + (p.plan ? ' · ' + p.plan : '')));
+  const off = mk('button', 'wa-linkbtn', 'Hide'); off.onclick = () => api.usagePlan(false).then(usageRefresh); head.appendChild(off);
+  box.appendChild(head);
+  if (!p.ok) { box.appendChild(mk('div', 'u-foot', p.error)); return; }
+  for (const [label, b] of [['Session limit', p.session], ['Weekly · all models', p.week], ['Weekly · Opus', p.weekOpus]]) {
+    if (!b) continue;
+    const row = mk('div', 'u-limit'), top = mk('div', 'u-limtop');
+    top.append(mk('span', '', label), mk('em', '', resetText(b.resetsAt) + '  ' + b.pct + '%'));
+    const bar = mk('div', 'u-bar'), fill = mk('i'); fill.style.width = b.pct + '%'; fill.style.background = b.pct >= 90 ? '#ff453a' : b.pct >= 70 ? '#f5b73c' : '#4a86e8';
+    bar.appendChild(fill); row.append(top, bar); box.appendChild(row);
+  }
+}
+function usageRefresh() {
+  if (usageBusy) return;
+  usageBusy = true;
+  api.usageGet().then(renderUsage).catch(() => {}).finally(() => { usageBusy = false; });
+}
+setInterval(() => { if (isOpen && PAGES[pageIdx] === 'usage') usageRefresh(); }, 3000);
+
+// ---- the reply field of a message banner: it stays while the pointer is on it or something is typed, and goes a few seconds after
+const replyIn = $('#toast-reply-in');
+const replyRest = (ms) => { clearTimeout(toastTimer); toastTimer = setTimeout(() => { if (document.activeElement === replyIn || replyIn.value.trim()) return; endToast(); }, ms); };
+$('#toast').addEventListener('mouseenter', () => { if (replyToastOn) clearTimeout(toastTimer); });
+$('#toast').addEventListener('mouseleave', () => { if (replyToastOn) replyRest(4000); });
+replyIn.addEventListener('focus', () => { clearTimeout(toastTimer); api.keepOpen(true); });
+replyIn.addEventListener('blur', () => { api.keepOpen(false); if (replyToastOn) replyRest(5000); });
+replyIn.addEventListener('keydown', (e) => { if (e.key === 'Escape') { replyIn.value = ''; replyIn.blur(); endToast(); } });
+$('#toast-reply').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const text = replyIn.value.trim();
+  if (!text || !replyCtx) return;
+  const ctx = replyCtx;
+  ui('whatsapp: reply from the banner');
+  $('#toast-reply-go').disabled = true;
+  api.waReply(ctx.chat, text, ctx.q ? { ...ctx.q, preview: ctx.preview || '' } : undefined).then((r) => {
+    $('#toast-reply-go').disabled = false;
+    if (r.ok) { replyIn.value = ''; replyIn.blur(); endToast(); } else { replyIn.placeholder = r.error || 'Not sent'; }
+  });
+});
